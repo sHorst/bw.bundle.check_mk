@@ -170,68 +170,62 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             "u'{user}': {{".format(
                 user=admin,
             ),
-            "'alias': u'{alias}',".format(
+            "  'alias': u'{alias}',".format(
                 alias=admin_config.get('alias', admin),
             ),
-            "'disable_notifications': {},".format(admin_config.get('disable_notifications', False)),
-            "'email': u'{email}',".format(
+            "  'disable_notifications': {},".format(admin_config.get('disable_notifications', False)),
+            "  'email': u'{email}',".format(
                 email=admin_config.get('email', ''),
             ),
         ]
 
         if 'contactgroups' in admin_config:
             contacts += [
-                "'contactgroups': {},".format(admin_config['contactgroups'])
+                "  'contactgroups': {},".format(admin_config['contactgroups'])
             ]
 
         if 'pager' in admin_config:
             contacts += [
-                "'pager': '{}',".format(admin_config['pager'])
+                "  'pager': '{}',".format(admin_config['pager'])
             ]
 
         contacts += [
-            "'notification_rules': [",
+            "  'notification_rules': [",
         ]
         for notification_rule, notification_rule_config in \
                 sorted(admin_config.get('notification_rules', {}).items(), key=sort_by_prio):
 
             if notification_rule_config.get('type', '') == 'pushover':
                 contacts += [
-                    "{",
-                    "  'comment': u'{}',".format(notification_rule),
-                    "  'contact_users': [u'{}'],".format(admin),
-                    "  'description': u'{}',".format(notification_rule_config.get('description', notification_rule)),
-                    "  'disabled': False,",
-                    "  'docu_url': '',",
-                    "  'match_host_event': {},".format(notification_rule_config.get('match_host_event', [])),
-                    "  'match_service_event': {},".format(notification_rule_config.get('match_service_event', [])),
-                    "  'notify_plugin': ("
-                    "    'pushover',",
                     "    {",
-                    "      'api_key': '{}',".format(notification_rule_config.get('api_key', '')),
-                    "      'recipient_key': '{}',".format(notification_rule_config.get('recipient_key', '')),
-                    "      'url_prefix': '{}/check_mk/'".format(site_url),
-                    "    }",
-                    "  )",
-                    "}",
+                    "      'comment': u'{}',".format(notification_rule),
+                    "      'contact_users': [u'{}'],".format(admin),
+                    "      'description': u'{}',".format(notification_rule_config.get('description', notification_rule)),
+                    "      'disabled': False,",
+                    "      'docu_url': '',",
+                    "      'match_host_event': {},".format(notification_rule_config.get('match_host_event', [])),
+                    "      'match_service_event': {},".format(notification_rule_config.get('match_service_event', [])),
+                    "      'notify_plugin': ("
+                    "        'pushover',",
+                    "        {",
+                    "          'api_key': '{}',".format(notification_rule_config.get('api_key', '')),
+                    "          'recipient_key': '{}',".format(notification_rule_config.get('recipient_key', '')),
+                    "          'url_prefix': '{}/check_mk/'".format(site_url),
+                    "        },",
+                    "      ),",
+                    "    },",
                 ]
 
-        # 'notification_rules': {
-        #     'push_over': {
-        #         'type': 'pushover',
-        #         'match_host_event': ['rd', 'dr', 'x'],
-        #         'match_service_event': ['rc', 'wc', 'cr', 'uc', 'f', 's', 'x'],
-        #         'api_key': libs.pw.decrypt('gAAAAABa3LKKGg6x2bQRvA8kEZ494G_giMPkumdbzIykxBMOoyRlXM'
-        #                                    'RKteyBkr7HQf3tzfx0Xj-g69hzyAbM2wJmF2u28ucGcs2tSfnD1FX_'
-        #                                    'g6nm8JthPZc='),
-        #         'recipient_key': libs.pw.decrypt('gAAAAABa3LKhr_IAICN38FJYVc7SA-T2qy18rCmmfgKCnoOc'
-        #                                          'Pbu7AObXsYXbrJ4mQuh6NL_kROp9leIctapnjm-vomN0DHIU'
-        #                                          '6Rd6DqHzuOs4iE-xDdC6i9s='),
-        #     }
-        # },
+        contacts += [
+            "  ],",
+        ]
+
+        if admin_config.get('fallback_contact', False):
+            contacts += [
+                "  'fallback_contact': {},".format(admin_config.get('fallback_contact', False)),
+            ]
 
         contacts += [
-            "]",
             '},',
         ]
 
@@ -298,6 +292,9 @@ for site, site_config in check_mk_config.get('sites', {}).items():
     }
 
     for key, value in omd_configs.items():
+        if value == '':
+            continue
+
         actions['omd_{}_{}'.format(site, key)] = {
             'command': "omd config {} set {} '{}'".format(site, key, value),
             'unless': 'test "$(omd config {} show {})" = "{}"'.format(site, key, value),
@@ -407,10 +404,11 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             '# encoding: utf-8',
             '',
             'wato_use_git = True',
+            "mkeventd_notify_contactgroup = 'all'",
         ]) + '\n',
         'owner': site,
         'group': site,
-        'mode': '0644',
+        'mode': '0660',
         'needs': [
             'action:check_mk_create_{}_site'.format(site)
         ],
@@ -492,7 +490,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                              ) + '\n',
         'owner': site,
         'group': site,
-        'mode': '0644',
+        'mode': '0660',
         'needs': [
             'action:check_mk_create_{}_site'.format(site)
         ],
@@ -514,7 +512,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                              ) + '\n',
         'owner': site,
         'group': site,
-        'mode': '0644',
+        'mode': '0660',
         'needs': [
             'action:check_mk_create_{}_site'.format(site)
         ],
@@ -523,74 +521,79 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         ],
     }
 
+    # {u'muetze': {'force_authuser_webservice': False, 'locked': False, 'roles': ['admin'], 'force_authuser': False,
+    #              'alias': u'Muetze', 'start_url': None},
+    #  'automation': {'alias': u'Check_MK Automation - used for calling web services', 'locked': False,
+    #                 'roles': ['admin'], 'language': 'en', 'automation_secret': '3OlTaam37oEo6DaHkE8RtPkGhaVntNjh'}
+
     files['{}/etc/check_mk/conf.d/wato/global.mk'.format(site_folder)] = {
         'content': '\n'.join([
             '# Written by Bundlewrap',
             '# encoding: utf-8',
             '',
+            "notification_fallback_email = '{}'".format(site_config.get('admin_email', '')),
             "use_new_descriptions_for = ['df',",
-            "                            'df_netapp',",
-            "                            'df_netapp32',",
-            "                            'esx_vsphere_datastores',",
-            "                            'hr_fs',",
-            "                            'vms_diskstat.df',",
-            "                            'zfsget',",
-            "                            'ps',",
-            "                            'ps.perf',",
-            "                            'wmic_process',",
-            "                            'services',",
-            "                            'logwatch',",
-            "                            'logwatch.groups',",
-            "                            'cmk-inventory',",
-            "                            'hyperv_vms',",
-            "                            'ibm_svc_mdiskgrp',",
-            "                            'ibm_svc_system',",
-            "                            'ibm_svc_systemstats.diskio',",
-            "                            'ibm_svc_systemstats.iops',",
-            "                            'ibm_svc_systemstats.disk_latency',",
-            "                            'ibm_svc_systemstats.cache',",
-            "                            'casa_cpu_temp',",
-            "                            'cmciii.temp',",
-            "                            'cmciii.psm_current',",
-            "                            'cmciii_lcp_airin',",
-            "                            'cmciii_lcp_airout',",
-            "                            'cmciii_lcp_water',",
-            "                            'etherbox.temp',",
-            "                            'liebert_bat_temp',",
-            "                            'nvidia.temp',",
-            "                            'ups_bat_temp',",
-            "                            'innovaphone_temp',",
-            "                            'enterasys_temp',",
-            "                            'raritan_emx',",
-            "                            'raritan_pdu_inlet',",
-            "                            'mknotifyd',",
-            "                            'mknotifyd.connection',",
-            "                            'postfix_mailq',",
-            "                            'nullmailer_mailq',",
-            "                            'barracuda_mailqueues',",
-            "                            'qmail_stats',",
-            "                            'http',",
-            "                            'mssql_backup',",
-            "                            'mssql_counters.cache_hits',",
-            "                            'mssql_counters.transactions',",
-            "                            'mssql_counters.locks',",
-            "                            'mssql_counters.sqlstats',",
-            "                            'mssql_counters.pageactivity',",
-            "                            'mssql_counters.locks_per_batch',",
-            "                            'mssql_counters.file_sizes',",
-            "                            'mssql_databases',",
-            "                            'mssql_datafiles',",
-            "                            'mssql_tablespaces',",
-            "                            'mssql_transactionlogs',",
-            "                            'mssql_versions']",
-            "enable_rulebased_notifications = True",
-            "",
+            " 'df_netapp',",
+            " 'df_netapp32',",
+            " 'esx_vsphere_datastores',",
+            " 'hr_fs',",
+            " 'vms_diskstat.df',",
+            " 'zfsget',",
+            " 'ps',",
+            " 'ps.perf',",
+            " 'wmic_process',",
+            " 'services',",
+            " 'logwatch',",
+            " 'logwatch.groups',",
+            " 'cmk-inventory',",
+            " 'hyperv_vms',",
+            " 'ibm_svc_mdiskgrp',",
+            " 'ibm_svc_system',",
+            " 'ibm_svc_systemstats.diskio',",
+            " 'ibm_svc_systemstats.iops',",
+            " 'ibm_svc_systemstats.disk_latency',",
+            " 'ibm_svc_systemstats.cache',",
+            " 'casa_cpu_temp',",
+            " 'cmciii.temp',",
+            " 'cmciii.psm_current',",
+            " 'cmciii_lcp_airin',",
+            " 'cmciii_lcp_airout',",
+            " 'cmciii_lcp_water',",
+            " 'etherbox.temp',",
+            " 'liebert_bat_temp',",
+            " 'nvidia.temp',",
+            " 'ups_bat_temp',",
+            " 'innovaphone_temp',",
+            " 'enterasys_temp',",
+            " 'raritan_emx',",
+            " 'raritan_pdu_inlet',",
+            " 'mknotifyd',",
+            " 'mknotifyd.connection',",
+            " 'postfix_mailq',",
+            " 'nullmailer_mailq',",
+            " 'barracuda_mailqueues',",
+            " 'qmail_stats',",
+            " 'http',",
+            " 'mssql_backup',",
+            " 'mssql_counters.cache_hits',",
+            " 'mssql_counters.transactions',",
+            " 'mssql_counters.locks',",
+            " 'mssql_counters.sqlstats',",
+            " 'mssql_counters.pageactivity',",
+            " 'mssql_counters.locks_per_batch',",
+            " 'mssql_counters.file_sizes',",
+            " 'mssql_databases',",
+            " 'mssql_datafiles',",
+            " 'mssql_tablespaces',",
+            " 'mssql_transactionlogs',",
+            " 'mssql_versions']",
             "tcp_connect_timeout = 10.0",
+            "enable_rulebased_notifications = True",
             "inventory_check_interval = 120",
         ]) + '\n',
         'owner': site,
         'group': site,
-        'mode': '0644',
+        'mode': '0660',
         'needs': [
             'action:check_mk_create_{}_site'.format(site)
         ],
@@ -808,7 +811,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                     for tagname, descr, tag in values:
                         if tagname in tags:
                             attributes['tag_{}'.format(name)] = tagname
-                            break;
+                            break
                     else:
                         attributes['tag_{}'.format(name)] = None
 
