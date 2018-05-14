@@ -1,0 +1,1087 @@
+from passlib.hash import md5_crypt
+
+
+def sort_by_prio(x):
+    if isinstance(x[1], list):
+        return x[0]
+    else:
+        return '{}_{}'.format(x[1].get('prio', 10), x[0])
+
+
+def format_hosts(hosts):
+    if isinstance(hosts, list):
+        return '[' + ", ".join(map(lambda x: "'{}'".format(x), hosts)) + ']'
+
+    return hosts
+
+
+def format_services(services):
+    if isinstance(services, list):
+        return '[' + ", ".join(map(lambda x: "'{}'".format(x), services)) + ']'
+
+    return services
+
+
+def generate_rules(site_config_rules):
+    rules = []
+    for rule, rule_config in sorted(site_config_rules.items(), key=sort_by_prio):
+        if isinstance(rule_config, list):
+            rules += [
+                'if {} == None:'.format(rule),
+                '  {} = []'.format(rule),
+                '',
+                '{} = ['.format(rule)
+            ]
+            # TODO: make tuple
+            rules += map(lambda x: "  {},".format(x), rule_config)
+            rules += [
+                '] + {}'.format(rule),
+                ''
+            ]
+        elif isinstance(rule_config, dict):
+            for subrule, subrule_config in sorted(rule_config.items(), key=sort_by_prio):
+                rules += [
+                    '{}.setdefault(\'{}\', [])'.format(rule, subrule),
+                    '{}[\'{}\'] = ['.format(rule, subrule),
+                ]
+                # TODO: make tuple
+                rules += map(lambda x: "  {},".format(x), subrule_config)
+                rules += [
+                    '] + {}[\'{}\']'.format(rule, subrule),
+                    ''
+                ]
+
+    return rules
+
+
+CHECK_MK_VERSION = '1.5.0b1'
+CHECK_MK_DEB_FILE = 'check-mk-raw-{}_0.stretch_amd64.deb'.format(CHECK_MK_VERSION)
+check_mk_config = node.metadata.get('check_mk', {})
+
+pkg_apt = {
+    'gdebi-core': {
+        'installed': True,
+    }
+}
+
+files = {}
+directories = {}
+downloads = {
+    '/opt/{}'.format(CHECK_MK_DEB_FILE): {
+        'url': 'https://mathias-kettner.de/support/1.5.0b1/{}'.format(CHECK_MK_DEB_FILE),
+        'sha256': 'acb3d79635f9bc069c4ab2477c0c015d0c8cc1c1e3f5b725058fad8d8012a2df',
+        'needs': [
+            'pkg_apt:gdebi-core',
+        ],
+    }
+}
+
+actions = {
+    'install_check_mk': {
+        'command': 'gdebi -n /opt/{}'.format(CHECK_MK_DEB_FILE),
+        'unless': 'omd version | grep {}'.format(CHECK_MK_VERSION),
+        'needs': [
+            'download:/opt/{}'.format(CHECK_MK_DEB_FILE),
+            'pkg_apt:gdebi-core',
+        ],
+    }
+}
+
+
+for site, site_config in check_mk_config.get('sites', {}).items():
+    admin_email = site_config.get('admin_email', '')
+    site_folder = '/omd/sites/{site}'.format(site=site)
+    site_url = '{url}/{site}/'.format(url=site_config.get('url', node.hostname), site=site)
+    site_tags = site_config.get('host_tags', {})
+
+    actions['check_mk_create_{}_site'.format(site)] = {
+        'command': 'omd create {}'.format(site),
+        'unless': 'omd sites | grep -q -e "^{} "'.format(site),
+        'needs': [
+            'action:install_check_mk',
+        ],
+    }
+
+    actions['check_mk_start_{}_site'.format(site)] = {
+        'command': 'sudo -u {site} omd start'.format(site=site),
+        'unless': 'omd status {site} | grep "Overall state:" | grep -q "running"'.format(site=site),
+        'needs': [
+            'action:check_mk_create_{}_site'.format(site),
+        ],
+    }
+
+    actions['check_mk_stop_{}_site'.format(site)] = {
+        'command': 'sudo -u {site} omd stop'.format(site=site),
+        'unless': 'omd status {site} | grep "Overall state:" | grep -q "stopped"'.format(site=site),
+        'triggered': True,
+        'needs': [
+            'action:check_mk_create_{}_site'.format(site),
+        ],
+    }
+
+    actions['check_mk_restart_{}_site'.format(site)] = {
+        'command': 'sudo -u {site} omd restart'.format(site=site),
+        'triggered': True,
+        'needs': [
+            'action:check_mk_create_{}_site'.format(site),
+        ],
+    }
+
+    actions['check_mk_recompile_{}_site'.format(site)] = {
+        'command': 'sudo -i -u {site} {folder}/bin/check_mk -O'.format(
+            site=site,
+            folder=site_folder,
+        ),
+        'triggered': True,
+        'needs': [
+            'action:check_mk_create_{}_site'.format(site),
+        ],
+    }
+
+    htpasswd = []
+    check_mk_users = [
+        '\'automation\': {'
+        + '\'alias\': u\'Check_MK Automation - used for calling web services\', '
+        + '\'locked\': False, '
+        + '\'roles\': [\'admin\'], '
+        + '\'language\': \'en\', '
+        + '\'automation_secret\': \''
+        + repo.libs.pw.get('check_mk_automation_secret_{}_{}'.format(node.name, site))
+        + '\'},',
+    ]
+
+    contacts = [
+        "'automation': {'alias': u'Check_MK Automation - used for calling web services', 'notifications_enabled': False, 'pager': '', 'email': u'', 'contactgroups': []},",
+    ]
+
+    for admin in site_config.get('admins', []):
+        admin_config = check_mk_config.get('users', {}).get(admin, {})
+        if not admin_config.get('enabled', False):
+            continue
+
+        check_mk_users += [
+            'u\'{user}\': {{\'alias\': u\'{alias}\', \'locked\': False, \'roles\': [\'admin\']}}, '.format(
+                user=admin,
+                alias=admin_config.get('alias', admin),
+            ),
+        ]
+
+        contacts += [
+            "u'{user}': {{".format(
+                user=admin,
+            ),
+            "'alias': u'{alias}',".format(
+                alias=admin_config.get('alias', admin),
+            ),
+            "'disable_notifications': {},".format(admin_config.get('disable_notifications', False)),
+            "'email': u'{email}',".format(
+                email=admin_config.get('email', ''),
+            ),
+        ]
+
+        if 'contactgroups' in admin_config:
+            contacts += [
+                "'contactgroups': {},".format(admin_config['contactgroups'])
+            ]
+
+        if 'pager' in admin_config:
+            contacts += [
+                "'pager': '{}',".format(admin_config['pager'])
+            ]
+
+        contacts += [
+            "'notification_rules': [",
+        ]
+        for notification_rule, notification_rule_config in \
+                sorted(admin_config.get('notification_rules', {}).items(), key=sort_by_prio):
+
+            if notification_rule_config.get('type', '') == 'pushover':
+                contacts += [
+                    "{",
+                    "  'comment': u'{}',".format(notification_rule),
+                    "  'contact_users': [u'{}'],".format(admin),
+                    "  'description': u'{}',".format(notification_rule_config.get('description', notification_rule)),
+                    "  'disabled': False,",
+                    "  'docu_url': '',",
+                    "  'match_host_event': {},".format(notification_rule_config.get('match_host_event', [])),
+                    "  'match_service_event': {},".format(notification_rule_config.get('match_service_event', [])),
+                    "  'notify_plugin': ("
+                    "    'pushover',",
+                    "    {",
+                    "      'api_key': '{}',".format(notification_rule_config.get('api_key', '')),
+                    "      'recipient_key': '{}',".format(notification_rule_config.get('recipient_key', '')),
+                    "      'url_prefix': '{}/check_mk/'".format(site_url),
+                    "    }",
+                    "  )",
+                    "}",
+                ]
+
+        # 'notification_rules': {
+        #     'push_over': {
+        #         'type': 'pushover',
+        #         'match_host_event': ['rd', 'dr', 'x'],
+        #         'match_service_event': ['rc', 'wc', 'cr', 'uc', 'f', 's', 'x'],
+        #         'api_key': libs.pw.decrypt('gAAAAABa3LKKGg6x2bQRvA8kEZ494G_giMPkumdbzIykxBMOoyRlXM'
+        #                                    'RKteyBkr7HQf3tzfx0Xj-g69hzyAbM2wJmF2u28ucGcs2tSfnD1FX_'
+        #                                    'g6nm8JthPZc='),
+        #         'recipient_key': libs.pw.decrypt('gAAAAABa3LKhr_IAICN38FJYVc7SA-T2qy18rCmmfgKCnoOc'
+        #                                          'Pbu7AObXsYXbrJ4mQuh6NL_kROp9leIctapnjm-vomN0DHIU'
+        #                                          '6Rd6DqHzuOs4iE-xDdC6i9s='),
+        #     }
+        # },
+
+        contacts += [
+            "]",
+            '},',
+        ]
+
+        salt = repo.libs.pw.get(
+            'check_mk_node_{}_site_{}_user_{}_salt'.format(node.name, site, admin),
+            length=8,
+        )
+
+        passwd = admin_config.get(
+            'password',
+            repo.libs.pw.get('check_mk_node_{}_site_{}_user_{}_password').format(node.name, site, admin)
+        )
+
+        # NEEDS to be md5, since check_mk only knows how to deal with those
+        hashed_password = md5_crypt.using(salt=salt).hash(passwd)
+
+        htpasswd += ['{}:{}'.format(admin, hashed_password)]
+
+    for user in site_config.get('users', []):
+        user_config = check_mk_config.get('users', {}).get(user, {})
+        if not user_config.get('enabled', False):
+            continue
+
+        check_mk_users += [
+            'u\'{user}\': {{\'alias\': u\'{user}\', \'locked\': False, \'roles\': [\'user\']}}, '.format(user=user),
+        ]
+        contacts += [
+            "u'{user}': {{'alias': u'{user}', 'email': u'{email}'}},".format(
+                user=user,
+                email=user_config.get('email', ''),
+            )
+        ]
+
+        salt = repo.libs.pw.get(
+            'check_mk_node_{}_site_{}_user_{}_salt'.format(node.name, site, user),
+            length=8,
+        )
+
+        passwd = user_config.get(
+            'password',
+            repo.libs.pw.get('check_mk_node_{}_site_{}_user_{}_password').format(node.name, site, user)
+        )
+
+        # NEEDS to be md5, since check_mk only knows how to deal with those
+        hashed_password = md5_crypt.using(salt=salt).hash(passwd)
+
+        htpasswd += ['{}:{}'.format(user, hashed_password)]
+
+    files['{site_folder}/etc/htpasswd'.format(site_folder=site_folder)] = {
+        'content': '\n'.join(htpasswd) + '\n',
+        'owner': site,
+        'group': site,
+        'mode': '0660',
+        'needs': [
+            'action:check_mk_create_{}_site'.format(site)
+        ],
+    }
+
+    omd_configs = {
+        'ADMIN_MAIL': admin_email,
+        'LIVESTATUS_TCP': 'on' if site_config.get('livestatus', False) else 'off',
+        'LIVESTATUS_TCP_ONLY_FROM': ' '.join(site_config.get('livestatus_allowed_ips', [])),
+        'LIVESTATUS_TCP_PORT': site_config.get('livestatus_port', 6557),
+    }
+
+    for key, value in omd_configs.items():
+        actions['omd_{}_{}'.format(site, key)] = {
+            'command': "omd config {} set {} '{}'".format(site, key, value),
+            'unless': 'test "$(omd config {} show {})" = "{}"'.format(site, key, value),
+            'needs': [
+                'action:check_mk_create_{}_site'.format(site)
+            ],
+            'preceded_by': [
+                'action:check_mk_stop_{}_site'.format(site),
+            ],
+            'needed_by': [
+                'action:check_mk_start_{}_site'.format(site)
+            ],
+        }
+
+    files['{}/.forward'.format(site_folder)] = {
+        'content': admin_email + '\n',
+        'owner': site,
+        'group': site,
+        'mode': '0644',
+        'needs': [
+            'action:check_mk_create_{}_site'.format(site)
+        ],
+    }
+
+    files['{}/etc/check_mk/main.mk'.format(site_folder)] = {
+        'content': '\n'.join([
+            '# Written by Bundlewrap',
+            '# encoding: utf-8',
+            '',
+            'filesystem_default_levels["levels"] = ( 95.0, 99.0 )',
+            # "ntp_default_levels = (15, 500.0, 1000.0)",
+            "if_inventory_portstates = ['1', '2', '5']",
+        ]) + '\n',
+        'owner': site,
+        'group': site,
+        'mode': '0644',
+        'needs': [
+            'action:check_mk_create_{}_site'.format(site)
+        ],
+        'triggers': [
+            'action:check_mk_recompile_{}_site'.format(site),
+        ],
+    }
+
+    # multisite.d
+    multisites = [
+        "  '{}': {{".format(site),
+        "    'status_host': None,",
+        "    'user_sync': 'all',",
+        "    'replication': '',",
+        "    'user_login': True,",
+        "    'insecure': False,",
+        "    'disable_wato': True,",
+        "    'disabled': False,",
+        "    'alias': u'Local site {}',".format(site),
+        "    'replicate_mkps': False,",
+        "    'timeout': 10,",
+        "    'persist': False,",
+        "    'replicate_ec': False,",
+        "    'multisiteurl': ''",
+        "},",
+    ]
+
+    for server in site_config.get('livestatus_server'):
+        multisites += [
+            "  '{}_on_{}': {{".format(server.get('site', ''), server.get('name', '')),
+            "    'status_host': None,",
+            "    'user_sync': 'all',",
+            "    'user_login': True,",
+            "    'insecure': False,",
+            "    'disabled': False,",
+            "    'replication': '',",
+            "    'multisiteurl': '',",
+            "    'replicate_mkps': True,",
+            "    'url_prefix': 'https://{}/{}/',".format(server.get('hostname', ''), server.get('site', '')),
+            "    'socket': 'tcp:{}:{}',".format(server.get('ips', [])[0], server.get('port', 6557)),
+            "    'disable_wato': True,",
+            "    'alias': u'{} on {}',".format(server.get('site', ''), server.get('name', '')),
+            "    'timeout': 10,",
+            "    'persist': True,",
+            "    'replicate_ec': True",
+            "  },",
+        ]
+
+    files['{}/etc/check_mk/multisite.d/sites.mk'.format(site_folder)] = {
+        'content': '\n'.join([
+            '# Written by Bundlewrap',
+            '# encoding: utf-8',
+            '',
+            'sites.update({',
+            ] + multisites + [
+            '})',
+        ]) + '\n',
+        'owner': site,
+        'group': site,
+        'mode': '0660',
+        'needs': [
+            'action:check_mk_create_{}_site'.format(site)
+        ],
+        'triggers': [
+            'action:check_mk_recompile_{}_site'.format(site),
+        ],
+    }
+    files['{}/etc/check_mk/multisite.d/wato/global.mk'.format(site_folder)] = {
+        'content': '\n'.join([
+            '# Written by Bundlewrap',
+            '# encoding: utf-8',
+            '',
+            'wato_use_git = True',
+        ]) + '\n',
+        'owner': site,
+        'group': site,
+        'mode': '0644',
+        'needs': [
+            'action:check_mk_create_{}_site'.format(site)
+        ],
+        'triggers': [
+            'action:check_mk_recompile_{}_site'.format(site),
+        ],
+    }
+
+    wato_host_tags = []
+    for host_tag in site_tags:
+        wato_host_tags += [
+            # we need to do this limbo, since check_mk is still 2.7 and we need the u flag on the string
+            # ('agent', u'Agent type', [
+            #     ('cmk-agent', u'Check_MK Agent (Server)', ['tcp']),
+            #     ('snmp-only', u'SNMP (Networking device, Appliance)', ['snmp']),
+            #     ('snmp-v1', u'Legacy SNMP device (using V1)', ['snmp']),
+            #     ('snmp-tcp', u'Dual: Check_MK Agent + SNMP', ['snmp', 'tcp']),
+            #     ('ping', u'No Agent', [])
+            # ]),
+
+            "  ('{host_tag[0]}', u'{host_tag[1]}', [".format(host_tag=host_tag),
+        ]
+
+        for option in host_tag[2]:
+            wato_host_tags += [
+                "    ('{option[0]}', u'{option[1]}', [{tags}]),".format(
+                    option=option,
+                    tags=', '.join(map(lambda x: "'{}'".format(x), option[2]))
+                ).replace("'None'", "None"),
+                ]
+
+        wato_host_tags += [
+            "  ]),"
+        ]
+
+    wato_aux_tags = []
+    for aux_tag in site_config.get('aux_tags', []):
+        wato_aux_tags += [
+            # we need to do this limbo, since check_mk is still 2.7 and we need the u flag on the string
+            "  ('{0[0]}', u'{0[1]}'),".format(aux_tag),
+        ]
+
+    files['{}/etc/check_mk/multisite.d/wato/hosttags.mk'.format(site_folder)] = {
+        'content': '\n'.join([
+                                 '# Written by Bundlewrap',
+                                 '# encoding: utf-8',
+                                 '',
+                                 'wato_host_tags += [',
+                             ] +
+                             wato_host_tags +
+                             [
+                                 ']',
+                                 'wato_aux_tags += [',
+                             ] +
+                             wato_aux_tags +
+                             [
+                                 ']',
+                             ]) + '\n',
+        'owner': site,
+        'group': site,
+        'mode': '0644',
+        'needs': [
+            'action:check_mk_create_{}_site'.format(site)
+        ],
+        'triggers': [
+            'action:check_mk_recompile_{}_site'.format(site),
+        ],
+    }
+
+    files['{}/etc/check_mk/multisite.d/wato/users.mk'.format(site_folder)] = {
+        'content': '\n'.join([
+                                 '# Written by Bundlewrap',
+                                 '# encoding: utf-8',
+                                 '',
+                                 'multisite_users.update({',
+                             ] +
+                             check_mk_users +
+                             ['})', ]
+                             ) + '\n',
+        'owner': site,
+        'group': site,
+        'mode': '0644',
+        'needs': [
+            'action:check_mk_create_{}_site'.format(site)
+        ],
+        'triggers': [
+            'action:check_mk_recompile_{}_site'.format(site),
+        ],
+    }
+
+    # conf.d
+    files['{}/etc/check_mk/conf.d/wato/contacts.mk'.format(site_folder)] = {
+        'content': '\n'.join([
+                                 '# Written by Bundlewrap',
+                                 '# encoding: utf-8',
+                                 '',
+                                 'contacts.update({',
+                             ] +
+                             contacts +
+                             ['})', ]
+                             ) + '\n',
+        'owner': site,
+        'group': site,
+        'mode': '0644',
+        'needs': [
+            'action:check_mk_create_{}_site'.format(site)
+        ],
+        'triggers': [
+            'action:check_mk_recompile_{}_site'.format(site),
+        ],
+    }
+
+    files['{}/etc/check_mk/conf.d/wato/global.mk'.format(site_folder)] = {
+        'content': '\n'.join([
+            '# Written by Bundlewrap',
+            '# encoding: utf-8',
+            '',
+            "use_new_descriptions_for = ['df',",
+            "                            'df_netapp',",
+            "                            'df_netapp32',",
+            "                            'esx_vsphere_datastores',",
+            "                            'hr_fs',",
+            "                            'vms_diskstat.df',",
+            "                            'zfsget',",
+            "                            'ps',",
+            "                            'ps.perf',",
+            "                            'wmic_process',",
+            "                            'services',",
+            "                            'logwatch',",
+            "                            'logwatch.groups',",
+            "                            'cmk-inventory',",
+            "                            'hyperv_vms',",
+            "                            'ibm_svc_mdiskgrp',",
+            "                            'ibm_svc_system',",
+            "                            'ibm_svc_systemstats.diskio',",
+            "                            'ibm_svc_systemstats.iops',",
+            "                            'ibm_svc_systemstats.disk_latency',",
+            "                            'ibm_svc_systemstats.cache',",
+            "                            'casa_cpu_temp',",
+            "                            'cmciii.temp',",
+            "                            'cmciii.psm_current',",
+            "                            'cmciii_lcp_airin',",
+            "                            'cmciii_lcp_airout',",
+            "                            'cmciii_lcp_water',",
+            "                            'etherbox.temp',",
+            "                            'liebert_bat_temp',",
+            "                            'nvidia.temp',",
+            "                            'ups_bat_temp',",
+            "                            'innovaphone_temp',",
+            "                            'enterasys_temp',",
+            "                            'raritan_emx',",
+            "                            'raritan_pdu_inlet',",
+            "                            'mknotifyd',",
+            "                            'mknotifyd.connection',",
+            "                            'postfix_mailq',",
+            "                            'nullmailer_mailq',",
+            "                            'barracuda_mailqueues',",
+            "                            'qmail_stats',",
+            "                            'http',",
+            "                            'mssql_backup',",
+            "                            'mssql_counters.cache_hits',",
+            "                            'mssql_counters.transactions',",
+            "                            'mssql_counters.locks',",
+            "                            'mssql_counters.sqlstats',",
+            "                            'mssql_counters.pageactivity',",
+            "                            'mssql_counters.locks_per_batch',",
+            "                            'mssql_counters.file_sizes',",
+            "                            'mssql_databases',",
+            "                            'mssql_datafiles',",
+            "                            'mssql_tablespaces',",
+            "                            'mssql_transactionlogs',",
+            "                            'mssql_versions']",
+            "enable_rulebased_notifications = True",
+            "",
+            "tcp_connect_timeout = 10.0",
+            "inventory_check_interval = 120",
+        ]) + '\n',
+        'owner': site,
+        'group': site,
+        'mode': '0644',
+        'needs': [
+            'action:check_mk_create_{}_site'.format(site)
+        ],
+        'triggers': [
+            'action:check_mk_recompile_{}_site'.format(site),
+        ],
+    }
+
+    define_hostgroups = []
+    hostgroups = []
+    for host_group, host_group_config in sorted(site_config.get('host_groups', {}).items(), key=sort_by_prio):
+        define_hostgroups += [
+            "  '{}': u'{}',".format(host_group, host_group_config.get('description', {})),
+        ]
+
+        hostgroups += [
+            "  ('{name}', {tags}, {hosts}, {{'description': u'{description}'}}),".format(
+                name=host_group,
+                tags='[{}]'.format(", ".join(map(lambda x: "'{}'".format(x), host_group_config.get('tags', [])))),
+                hosts=format_hosts(host_group_config.get('hosts', "ALL_HOSTS")),
+                description=host_group_config.get('description', {})
+            ),
+        ]
+
+    define_contactgroups = [
+        "  'all': u'Everything',",
+    ]
+    host_contactgroups = [
+        "  ('all', [], ALL_HOSTS, {'description': u'Admins'}),",
+    ]
+    service_contactgroups = [
+        "  ('all', [], ALL_HOSTS, ALL_SERVICES, {'description': u'admins'}),",
+    ]
+
+    for contact_group, contact_group_config in sorted(site_config.get('contact_groups', {}).items(), key=sort_by_prio):
+        define_contactgroups += [
+            "  '{}': u'{}',".format(contact_group, contact_group_config.get('description', {})),
+        ]
+        host_contactgroups += [
+            "  ('{name}', {tags}, {hosts}, {{'description': u'{description}'}}),".format(
+                name=contact_group,
+                tags='[{}]'.format(
+                    ", ".join(map(lambda x: "'{}'".format(x), contact_group_config.get('hosts', {}).get('tags', [])))
+                ),
+                hosts=format_hosts(contact_group_config.get('hosts', {}).get('hosts', "ALL_HOSTS")),
+                description=contact_group_config.get('hosts', {}).get('description', {})
+            ),
+        ]
+        service_contactgroups += [
+            "  ('{name}', {tags}, {hosts}, {services}, {{'description': u'{description}'}}),".format(
+                name=contact_group,
+                tags='[{}]'.format(
+                    ", ".join(map(lambda x: "'{}'".format(x), contact_group_config.get('sevices', {}).get('tags', [])))
+                ),
+                hosts=format_hosts(contact_group_config.get('services', {}).get('hosts', "ALL_HOSTS")),
+                services=format_services(contact_group_config.get('services', {}).get('services', 'ALL_SERVICES')),
+                description=contact_group_config.get('services', {}).get('description', {})
+            ),
+        ]
+
+    files['{}/etc/check_mk/conf.d/wato/groups.mk'.format(site_folder)] = {
+        'content': '\n'.join([
+                                 '# Written by Bundlewrap',
+                                 '# encoding: utf-8',
+                                 '',
+                                 "if type(define_hostgroups) != dict:",
+                                 "    define_hostgroups = {}",
+                                 "define_hostgroups.update({",
+                             ] +
+                             define_hostgroups +
+                             [
+                                 "})",
+                                 "",
+                                 "if type(define_contactgroups) != dict:",
+                                 "    define_contactgroups = {}",
+                                 "define_contactgroups.update({",
+                             ] +
+                             define_contactgroups +
+                             [
+                                 "})",
+                             ]) + '\n',
+        'owner': site,
+        'group': site,
+        'mode': '0644',
+        'needs': [
+            'action:check_mk_create_{}_site'.format(site)
+        ],
+        'triggers': [
+            'action:check_mk_recompile_{}_site'.format(site),
+        ],
+    }
+
+    # TODO: conf.d/wato/notify.mk
+    rules = [
+        '# Written by Bundlewrap',
+        '# encoding: utf-8',
+        '',
+    ]
+
+    rules += [
+        'host_groups = [',
+    ]
+    rules += hostgroups
+    rules += [
+        '] + host_groups',
+        '',
+    ]
+
+    rules += [
+        'host_contactgroups = [',
+    ]
+    rules += host_contactgroups
+    rules += [
+        '] + host_contactgroups',
+        '',
+    ]
+    rules += [
+        'service_contactgroups = [',
+    ]
+    rules += service_contactgroups
+    rules += [
+        '] + service_contactgroups',
+        '',
+    ]
+
+    rules += generate_rules(site_config.get('rules', {}))
+
+    files['{}/etc/check_mk/conf.d/wato/rules.mk'.format(site_folder)] = {
+        'content': '\n'.join(rules) + '\n',
+        'owner': site,
+        'group': site,
+        'mode': '0644',
+        'needs': [
+            'action:check_mk_create_{}_site'.format(site)
+        ],
+        'triggers': [
+            'action:check_mk_recompile_{}_site'.format(site),
+        ],
+    }
+
+    # generate folders and hosts
+    for folder, folder_config in site_config.get('folders', {}).items():
+        directories['{}/etc/check_mk/conf.d/wato/{}'.format(site_folder, folder)] = {
+            'owner': site,
+            'group': site,
+            'mode': '0755',
+            'needs': [
+                'action:check_mk_create_{}_site'.format(site)
+            ],
+        }
+
+        rules = generate_rules(folder_config.get('rules', {}))
+
+        files['{}/etc/check_mk/conf.d/wato/{}/rules.mk'.format(site_folder, folder)] = {
+            'content': '\n'.join(rules) + '\n',
+            'owner': site,
+            'group': site,
+            'mode': '0644',
+            'needs': [
+                'action:check_mk_create_{}_site'.format(site)
+            ],
+            'triggers': [
+                'action:check_mk_recompile_{}_site'.format(site),
+            ],
+        }
+
+        files['{}/etc/check_mk/conf.d/wato/{}/.wato'.format(site_folder, folder)] = {
+            'content': '\n'.join([
+                "{{"
+                "'lock': False, 'attributes': {{}}, "
+                "'num_hosts': {num_hosts}, 'lock_subfolders': False, "
+                "'title': u'{title}'}}".format(
+                    num_hosts=len(folder_config.get('hosts', [])),
+                    title=folder,
+                )
+            ]) + '\n',
+            'owner': site,
+            'group': site,
+            'mode': '0644',
+            'needs': [
+                'action:check_mk_create_{}_site'.format(site),
+            ],
+            'triggers': [
+                'action:check_mk_recompile_{}_site'.format(site),
+            ],
+        }
+
+        all_hosts = []
+        extra_host_config_parents = []
+        ipaddresses = []
+        snmp_communities = []
+        host_attributes = []
+
+        rediscover_hosts = []
+        for host in folder_config.get('hosts', []):
+            if isinstance(host, str):
+                host_node = repo.get_node(host)
+                host_node_check_mk_config = host_node.metadata.get('check_mk', {})
+                host = {
+                    'hostname': host_node.hostname,
+                    'port': host_node_check_mk_config.get('port', 6556),
+                    'tags': sorted(host_node_check_mk_config.get('tags', [])),
+                    'attributes': host_node_check_mk_config.get('attributes', {}),
+                }
+
+            if host.get('hostname', '') == '':
+                continue
+
+            tags = host.get('tags', [])
+            attributes = host.get('attributes', {})
+
+            for name, description, values in sorted(site_tags, key=lambda x: x[0]):
+                # if it is configured, do not change
+                if 'tag_{}'.format(name) not in attributes:
+                    for tagname, descr, tag in values:
+                        if tagname in tags:
+                            attributes['tag_{}'.format(name)] = tagname
+                            break;
+                    else:
+                        attributes['tag_{}'.format(name)] = None
+
+            all_hosts += [
+                # TODO: move prod to tags
+                '  "{hostname}|site:{site}|prod|wato|{tags}|/" + FOLDER_PATH + "/",'.format(
+                    hostname=host['hostname'],
+                    site=site,
+                    tags="|".join(tags)
+                ),
+            ]
+
+            parents = host.get('parents', [])
+
+            if parents:
+                extra_host_config_parents += [
+                    "  ('{hostname}', {parents}),".format(
+                        hostname=host['hostname'],
+                        parents=map(lambda x: "'{}'".format(x), parents)
+                    ),
+                ]
+
+            ip = host.get('ip_address', None)
+
+            if ip:
+                ipaddresses += [
+                    "  '{hostname}': '{ip}',".format(
+                        hostname=host['hostname'],
+                        ip=ip,
+                    ),
+                ]
+                attributes['ipaddress'] = ip
+
+            snmp_community = host.get('snmp_community', None)
+
+            if snmp_community:
+                snmp_communities += [
+                    "  '{hostname}': '{community}',".format(
+                        hostname=host['hostname'],
+                        community=snmp_community,
+                    ),
+                ]
+                attributes['snmp_community'] = snmp_community
+
+            if attributes:
+                host_attributes += [
+                    "  '{hostname}': {attributes},".format(
+                        hostname=host['hostname'],
+                        attributes=attributes,
+                    ),
+                ]
+
+            rediscover_hosts += [host['hostname'], ]
+
+            actions['check_mk_rediscover_host_{}'.format(host['hostname'])] = {
+                'command': 'sudo -i -u {site} {folder}/bin/check_mk -II {host}'.format(
+                    site=site,
+                    folder=site_folder,
+                    host=host['hostname']
+                ),
+                'triggered': True,
+            }
+
+        files['{}/etc/check_mk/conf.d/wato/{}/hosts.mk'.format(site_folder, folder)] = {
+            'content': '\n'.join([
+                                     '# Written by Bundlewrap',
+                                     '# encoding: utf-8',
+                                     '',
+                                     "all_hosts += [",
+                                 ] +
+                                 all_hosts +
+                                 [
+                                     "]",
+                                     "",
+                                     "# Explicit IPv4 addresses",
+                                     "ipaddresses.update({",
+                                 ] +
+                                 ipaddresses +
+                                 [
+                                     "})",
+                                     "",
+                                     "# Explicit SNMP communities",
+                                     "explicit_snmp_communities.update({",
+                                 ] +
+                                 snmp_communities +
+                                 [
+                                     "})",
+                                     "",
+                                     "# Settings for parents",
+                                     "extra_host_conf.setdefault('parents', []).extend([",
+                                 ] +
+                                 extra_host_config_parents +
+                                 [
+                                     "])",
+                                     "# Host attributes (needed for WATO)",
+                                     "host_attributes.update({",
+                                 ] +
+                                 host_attributes +
+                                 [
+                                     "})",
+                                 ]) + '\n',
+            'owner': site,
+            'group': site,
+            'mode': '0644',
+            'needs': [
+                'action:check_mk_create_{}_site'.format(site),
+            ],
+            'triggers': [
+                            'action:check_mk_recompile_{}_site'.format(site),
+                        ] + ["action:check_mk_rediscover_host_{}".format(host) for host in rediscover_hosts]
+        }
+
+    # mkevent.d
+    # TODO: check if we want to write to mkevent.d/wato/rules
+    # rules += []
+    # rule_packs += [
+    #     {'disabled': False, 'rules': [
+    #         {
+    #             'comment': u'',
+    #             'count': {
+    #                 'count': 1,
+    #                 'algorithm': 'interval',
+    #                 'period': 86400,
+    #                 'separate_application': True,
+    #                 'count_ack': False,
+    #                 'separate_match_groups': True,
+    #                 'separate_host': True
+    #             },
+    #             'cancel_action_phases': 'always',
+    #             'set_application': u'auth',
+    #             'description': u'Authentication Failed',
+    #             'autodelete': False,
+    #             'cancel_actions': [],
+    #             'drop': False,
+    #             'match_application': u'1.3.6.1.6.3.1.1.5.5',
+    #             'hits': 0,
+    #             'actions': [],
+    #             'invert_matching': False,
+    #             'disabled': False,
+    #             'state': 2,
+    #             'match_facility': 31,
+    #             'sl': 0,
+    #             'docu_url': '',
+    #             'id': 'auth_fail',
+    #             'match': u''
+    #         },
+    #         {
+    #             'comment': u'',
+    #             'set_application': u'link',
+    #             'cancel_action_phases': 'always',
+    #             'docu_url': '',
+    #             'description': u'Generate Error when link goes down',
+    #             'autodelete': False,
+    #             'cancel_actions': [],
+    #             'drop': False,
+    #             'match_ok': u'1.3.6.1.2.1.2.2.1.8.[0-9]+: 2',
+    #             'hits': 2,
+    #             'actions': [],
+    #             'id': 'link_up',
+    #             'disabled': True,
+    #             'state': 1,
+    #             'match_facility': 31,
+    #             'sl': 0,
+    #             'match_application': u'1.3.6.1.6.3.1.1.5.[34]',
+    #             'invert_matching': False,
+    #             'match': u'1.3.6.1.2.1.2.2.1.8.[0-9]+: [12]'
+    #         },
+    #         {
+    #             'comment': u'',
+    #             'set_application': u'link',
+    #             'cancel_action_phases': 'always',
+    #             'docu_url': '',
+    #             'description': u'Generate Error when link goes down',
+    #             'autodelete': False,
+    #             'cancel_actions': [],
+    #             'drop': False,
+    #             'match_ok': u'1.3.6.1.2.1.2.2.1.8.[0-9]+: 1',
+    #             'hits': 0,
+    #             'actions': [],
+    #             'id': 'link_down',
+    #             'disabled': True,
+    #             'state': 1,
+    #             'match_facility': 31,
+    #             'sl': 0,
+    #             'match_application': u'1.3.6.1.6.3.1.1.5.[34]',
+    #             'invert_matching': False,
+    #             'match': u'1.3.6.1.2.1.2.2.1.8.[0-9]+: ([12])'
+    #         },
+    #         {
+    #             'comment': u'',
+    #             'set_application': u'link',
+    #             'cancel_action_phases': 'always',
+    #             'docu_url': '',
+    #             'description': u'Generate Warning when link goes up',
+    #             'autodelete': False,
+    #             'cancel_actions': [],
+    #             'drop': False,
+    #             'hits': 0,
+    #             'actions': [],
+    #             'id': 'link_up_warn',
+    #             'disabled': False,
+    #             'state': 1,
+    #             'match_facility': 31,
+    #             'sl': 0,
+    #             'match_application': u'1.3.6.1.6.3.1.1.5.4',
+    #             'set_text': u'Link of Port \\1 is up (\\2)',
+    #             'invert_matching': False,
+    #             'match': u'1.3.6.1.2.1.2.2.1.8.([0 - 9] +): ([12])'
+    #         },
+    #         {
+    #             'comment': u'',
+    #             'set_application': u'link',
+    #             'cancel_action_phases': 'always',
+    #             'description': u'GenerateWarningwhenlinkgoesup / down',
+    #             'autodelete': False,
+    #             'cancel_actions': [],
+    #             'drop': False,
+    #             'match_application': u'1.3.6.1.6.3.1.1.5.3',
+    #             'actions': [],
+    #             'invert_matching': False,
+    #             'disabled': False,
+    #             'state': 1,
+    #             'match_facility': 31,
+    #             'sl': 0,
+    #             'docu_url': '',
+    #             'set_text': u'LinkofPort \\1 is down(\\2)',
+    #             'id': 'link_down_warn',
+    #             'match': u'1.3.6.1.2.1.2.2.1.8.([0 - 9] +): ([12])'
+    #         },
+    #         {
+    #             'comment': u'',
+    #             'set_application': u'link',
+    #             'cancel_action_phases': 'always',
+    #             'description': u'GenerateWarningwhenlinkgoesup / down',
+    #             'autodelete': False,
+    #             'cancel_actions': [],
+    #             'drop': False,
+    #             'match_application': u'1.3.6.1.6.3.1.1.5.[34]',
+    #             'hits': 3,
+    #             'actions': [],
+    #             'invert_matching': False,
+    #             'disabled': False,
+    #             'state': 1,
+    #             'match_facility': 31,
+    #             'sl': 0,
+    #             'docu_url': '',
+    #             'set_text': u'LinkofPort \\1 is \\2',
+    #             'id': 'link',
+    #             'match': u'1.3.6.1.2.1.2.2.1.8.([0 - 9] +): ([12])'
+    #         },
+    #         {
+    #             'comment': u'',
+    #             'hits': 18,
+    #             'description': u'logallSNMPTraps',
+    #             'autodelete': False,
+    #             'cancel_actions': [],
+    #             'drop': False,
+    #             'cancel_action_phases': 'always',
+    #             'actions': [],
+    #             'invert_matching': False,
+    #             'disabled': False,
+    #             'state': -1,
+    #             'match_facility': 31,
+    #             'sl': 0,
+    #             'docu_url': '',
+    #             'id': 'snmp_log',
+    #             'match': u''
+    #         }
+    #     ],
+    #      'hits': 24,
+    #      'id': 'snmp_traps',
+    #      'title': u'SNMPTraps'
+    #      }
+    # ]
+
+    # TODO: patch sha512 support into htpasswd authentication ( ~/share/check_mk/web/plugins/userdb/htpasswd.py )
