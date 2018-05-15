@@ -54,9 +54,16 @@ def generate_rules(site_config_rules):
     return rules
 
 
-CHECK_MK_VERSION = '1.5.0b1'
-CHECK_MK_DEB_FILE = 'check-mk-raw-{}_0.stretch_amd64.deb'.format(CHECK_MK_VERSION)
 check_mk_config = node.metadata.get('check_mk', {})
+
+if check_mk_config.get('beta', False):
+    CHECK_MK_VERSION = '1.5.0b3'
+    CHECK_MK_DEB_FILE = 'check-mk-raw-{}_0.stretch_amd64.deb'.format(CHECK_MK_VERSION)
+    CHECK_MK_DEB_FILE_SHA256 = '3c56922dbd7e95b451f758782b37880649d0adc0ddad43918badf555562b5e27'
+else:
+    CHECK_MK_VERSION = '1.4.0p31'
+    CHECK_MK_DEB_FILE = 'check-mk-raw-{}_0.stretch_amd64.deb'.format(CHECK_MK_VERSION)
+    CHECK_MK_DEB_FILE_SHA256 = 'cbbd46be8b486c12f74e4368a1d8e608864aaa105bf85c165e7604fcba7668f0'
 
 pkg_apt = {
     'gdebi-core': {
@@ -68,8 +75,8 @@ files = {}
 directories = {}
 downloads = {
     '/opt/{}'.format(CHECK_MK_DEB_FILE): {
-        'url': 'https://mathias-kettner.de/support/1.5.0b1/{}'.format(CHECK_MK_DEB_FILE),
-        'sha256': 'acb3d79635f9bc069c4ab2477c0c015d0c8cc1c1e3f5b725058fad8d8012a2df',
+        'url': 'https://mathias-kettner.de/support/{}/{}'.format(CHECK_MK_VERSION, CHECK_MK_DEB_FILE),
+        'sha256': CHECK_MK_DEB_FILE_SHA256,
         'needs': [
             'pkg_apt:gdebi-core',
         ],
@@ -519,6 +526,33 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         'triggers': [
             'action:check_mk_recompile_{}_site'.format(site),
         ],
+    }
+
+    files['{}/etc/check_mk/conf.d/wato/notifications.mk'.format(site_folder)] = {
+        'content': '\n'.join([
+            '# Written by Bundlewrap',
+            '# encoding: utf-8',
+            '',
+            "notification_rules += [{'allow_disable': True,",
+            "  'comment': u'',",
+            "  'contact_all': False,",
+            "  'contact_all_with_email': False,",
+            "  'contact_object': True,",
+            "  'description': u'html',",
+            "  'disabled': False,",
+            "  'docu_url': '',",
+            "  'notify_plugin': (u'mail', {})}]",
+        ]) + '\n',
+        'owner': site,
+        'group': site,
+        'mode': '0660',
+        'needs': [
+            'action:check_mk_create_{}_site'.format(site)
+        ],
+        'triggers': [
+            'action:check_mk_recompile_{}_site'.format(site),
+        ],
+
     }
 
     # {u'muetze': {'force_authuser_webservice': False, 'locked': False, 'roles': ['admin'], 'force_authuser': False,
