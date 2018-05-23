@@ -294,9 +294,11 @@ for site, site_config in check_mk_config.get('sites', {}).items():
     omd_configs = {
         'ADMIN_MAIL': admin_email,
         'LIVESTATUS_TCP': 'on' if site_config.get('livestatus', False) else 'off',
-        'LIVESTATUS_TCP_ONLY_FROM': ' '.join(site_config.get('livestatus_allowed_ips', [])),
         'LIVESTATUS_TCP_PORT': site_config.get('livestatus_port', 6557),
     }
+
+    if check_mk_config.get('beta', False):
+        omd_configs['LIVESTATUS_TCP_ONLY_FROM'] = ' '.join(site_config.get('livestatus_allowed_ips', []))
 
     for key, value in omd_configs.items():
         if value == '':

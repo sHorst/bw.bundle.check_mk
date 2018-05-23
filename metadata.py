@@ -34,18 +34,29 @@ def find_hosts_to_monitor(metadata):
             if folder_config.get('already_generated', False):
                 continue
 
-            group = folder_config.get('group', '')
+            group = folder_config.get('group', None)
+            bundle = folder_config.get('bundle', None)
+            include_self = folder_config.get('include_self', False)
 
             hosts = []
-            for checked_node in sorted(repo.nodes_in_group(group), key=lambda x: x.name):
+            for checked_node in sorted(repo.nodes, key=lambda x: x.name):
                 if not checked_node.has_bundle('check_mk_agent'):
+                    continue
+
+                if not include_self and checked_node.name == node.name:
+                    continue
+
+                if group and not checked_node.in_group(group):
+                    continue
+
+                if bundle and not checked_node.has_bundle(bundle):
                     continue
 
                 if checked_node.partial_metadata == {}:
                     return metadata, RUN_ME_AGAIN
 
-                if checked_node.partial_metadata.get('check_mk', {}).get('server', '') == node.name:
-                    hosts += [checked_node.name, ]
+                # if node.name in checked_node.partial_metadata.get('check_mk', {}).get('servers', []):
+                hosts += [checked_node.name, ]
 
             metadata['check_mk']['sites'][site]['folders'][folder]['hosts'] = hosts
             metadata['check_mk']['sites'][site]['folders'][folder]['already_generated'] = True
