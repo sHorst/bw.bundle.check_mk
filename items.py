@@ -22,9 +22,13 @@ def format_services(services):
     return services
 
 
-def generate_rules(site_config_rules):
+def generate_rules(global_config_rules, site_config_rules):
     rules = []
-    for rule, rule_config in sorted(site_config_rules.items(), key=sort_by_prio):
+
+    config_rules = site_config_rules
+    # config_rules += site_config_rules
+
+    for rule, rule_config in sorted(config_rules.items(), key=sort_by_prio):
         if isinstance(rule_config, list):
             rules += [
                 'if {} == None:'.format(rule),
@@ -755,7 +759,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         '',
     ]
 
-    rules += generate_rules(site_config.get('rules', {}))
+    rules += generate_rules(check_mk_config.get('global_rules', {}), site_config.get('rules', {}))
 
     files['{}/etc/check_mk/conf.d/wato/rules.mk'.format(site_folder)] = {
         'content': '\n'.join(rules) + '\n',
@@ -781,7 +785,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             ],
         }
 
-        rules = generate_rules(folder_config.get('rules', {}))
+        rules = generate_rules(check_mk_config.get('global_rules', {}), folder_config.get('rules', {}))
 
         files['{}/etc/check_mk/conf.d/wato/{}/rules.mk'.format(site_folder, folder)] = {
             'content': '\n'.join(rules) + '\n',
@@ -831,7 +835,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                 host = {
                     'hostname': host_node.hostname,
                     'port': host_node_check_mk_config.get('port', 6556),
-                    'tags': sorted(host_node_check_mk_config.get('tags', [])),
+                    'tags': sorted(list(dict.fromkeys(host_node_check_mk_config.get('tags', [])))),  # uniq and sorted
                     'attributes': host_node_check_mk_config.get('attributes', {}),
                 }
 
