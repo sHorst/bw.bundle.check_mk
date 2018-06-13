@@ -1,4 +1,5 @@
 from passlib.hash import md5_crypt
+from bundlewrap.utils.dicts import merge_dict
 
 
 def sort_by_prio(x):
@@ -22,40 +23,94 @@ def format_services(services):
     return services
 
 
-def generate_rules(global_config_rules, site_config_rules):
-    rules = []
+def dict_to_string_python_2(format_dict):
+    output = []
+    for dict_key, dict_value in format_dict.items():
+        if isinstance(dict_value, str):
+            output += ["'{}': u'{}'".format(dict_key, dict_value), ]
+        elif isinstance(dict_value, dict):
+            output += ["'{}': {}".format(dict_key, dict_to_string_python_2(dict_value)), ]
+        else:
+            output += ["'{}': {}".format(dict_key, dict_value), ]
 
-    config_rules = site_config_rules
-    # config_rules += site_config_rules
+    return "{{{}}}".format(', '.join(output))
+
+
+def format_rule(rule_config):
+    check_mk_variables = ['ALL_HOSTS']
+
+    if isinstance(rule_config, tuple) or isinstance(rule_config, list):
+        config = rule_config[0]
+        if isinstance(rule_config[0], str):
+            config = "'{}'".format(rule_config[0])
+
+        output = '('
+
+        if len(rule_config) >= 1:
+            output += "{}".format(
+                config,
+            )
+
+        if len(rule_config) >= 2:
+            output += ", {}".format(
+                "['{}', ]".format("', '".join(rule_config[1])) if len(rule_config[1]) else '[]',
+            )
+
+        if len(rule_config) >= 3:
+            output += ", {}".format(
+                "'{}'".format(rule_config[2]) if rule_config[2] not in check_mk_variables else rule_config[2],
+            )
+
+        if len(rule_config) >= 4:
+            output += ', {}'.format(
+                dict_to_string_python_2(rule_config[3]),
+            )
+
+        if len(rule_config) >= 5:
+            raise BundleError(_(
+                "Config Rule has to many values {item} in bundle '{bundle}'"
+            ).format(
+                file=self.node.name,
+                bundle=bundle.name,
+                item=item_id,
+            ))
+
+        output += ')'
+
+        return output
+    else:
+        return rule_config
+
+
+def generate_rules(config_rules):
+    output_rules = []
 
     for rule, rule_config in sorted(config_rules.items(), key=sort_by_prio):
         if isinstance(rule_config, list):
-            rules += [
+            output_rules += [
                 'if {} == None:'.format(rule),
                 '  {} = []'.format(rule),
                 '',
                 '{} = ['.format(rule)
             ]
-            # TODO: make tuple
-            rules += map(lambda x: "  {},".format(x), rule_config)
-            rules += [
+            output_rules += map(lambda x: "  {},".format(format_rule(x)), rule_config)
+            output_rules += [
                 '] + {}'.format(rule),
                 ''
             ]
         elif isinstance(rule_config, dict):
             for subrule, subrule_config in sorted(rule_config.items(), key=sort_by_prio):
-                rules += [
+                output_rules += [
                     '{}.setdefault(\'{}\', [])'.format(rule, subrule),
                     '{}[\'{}\'] = ['.format(rule, subrule),
                 ]
-                # TODO: make tuple
-                rules += map(lambda x: "  {},".format(x), subrule_config)
-                rules += [
+                output_rules += map(lambda x: "  {},".format(format_rule(x)), subrule_config)
+                output_rules += [
                     '] + {}[\'{}\']'.format(rule, subrule),
                     ''
                 ]
 
-    return rules
+    return output_rules
 
 
 check_mk_config = node.metadata.get('check_mk', {})
@@ -103,7 +158,23 @@ for site, site_config in check_mk_config.get('sites', {}).items():
     admin_email = site_config.get('admin_email', '')
     site_folder = '/omd/sites/{site}'.format(site=site)
     site_url = '{url}/{site}/'.format(url=site_config.get('url', node.hostname), site=site)
-    site_tags = site_config.get('host_tags', {})
+
+    site_host_tags = site_config.get('host_tags', {})
+    if isinstance(site_host_tags, list):
+        tmp = site_host_tags
+        site_host_tags = {}
+
+        for name, description, subtags_list in tmp:
+            subtags = {}
+            for subtag_name, subtag_descr, subtag_add_tags in subtags_list:
+                subtags[subtag_name if subtag_name else 'None'] = (subtag_descr, subtag_add_tags)
+
+            site_host_tags[name if name else 'None'] = {
+                'description': description,
+                'subtags': subtags,
+            }
+
+    site_tags = merge_dict(check_mk_config.get('host_tags', {}), site_host_tags)
 
     actions['check_mk_create_{}_site'.format(site)] = {
         'command': 'omd create {}'.format(site),
@@ -289,7 +360,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         'content': '\n'.join(htpasswd) + '\n',
         'owner': site,
         'group': site,
-        'mode': '0660',
+        'mode': '0640',
         'needs': [
             'action:check_mk_create_{}_site'.format(site)
         ],
@@ -299,6 +370,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         'ADMIN_MAIL': admin_email,
         'LIVESTATUS_TCP': 'on' if site_config.get('livestatus', False) else 'off',
         'LIVESTATUS_TCP_PORT': site_config.get('livestatus_port', 6557),
+        'MKEVENTD_SNMPTRAP': 'on',
     }
 
     if check_mk_config.get('beta', False):
@@ -403,7 +475,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         ]) + '\n',
         'owner': site,
         'group': site,
-        'mode': '0660',
+        'mode': '0640',
         'needs': [
             'action:check_mk_create_{}_site'.format(site)
         ],
@@ -421,7 +493,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         ]) + '\n',
         'owner': site,
         'group': site,
-        'mode': '0660',
+        'mode': '0640',
         'needs': [
             'action:check_mk_create_{}_site'.format(site)
         ],
@@ -431,7 +503,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
     }
 
     wato_host_tags = []
-    for host_tag in site_tags:
+    for host_tag, host_tag_config in sorted(site_tags.items(), key=sort_by_prio):
         wato_host_tags += [
             # we need to do this limbo, since check_mk is still 2.7 and we need the u flag on the string
             # ('agent', u'Agent type', [
@@ -442,14 +514,18 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             #     ('ping', u'No Agent', [])
             # ]),
 
-            "  ('{host_tag[0]}', u'{host_tag[1]}', [".format(host_tag=host_tag),
+            "  ('{host_tag}', u'{description}', [".format(
+                host_tag=host_tag,
+                description=host_tag_config.get('description', '')
+            ),
         ]
 
-        for option in host_tag[2]:
+        for subtag_name, subtag_config in host_tag_config.get('subtags', {}).items():
             wato_host_tags += [
-                "    ('{option[0]}', u'{option[1]}', [{tags}]),".format(
-                    option=option,
-                    tags=', '.join(map(lambda x: "'{}'".format(x), option[2]))
+                "    ('{name}', u'{description}', [{tags}]),".format(
+                    name=subtag_name,
+                    description=subtag_config[0],
+                    tags=', '.join(map(lambda x: "'{}'".format(x), subtag_config[1]))
                 ).replace("'None'", "None"),
                 ]
 
@@ -458,10 +534,16 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         ]
 
     wato_aux_tags = []
-    for aux_tag in site_config.get('aux_tags', []):
+    for aux_tag, aux_tag_config in sorted(
+            merge_dict(check_mk_config.get('aux_tags', {}), site_config.get('aux_tags', {})).items(),
+            key=sort_by_prio):
+
         wato_aux_tags += [
             # we need to do this limbo, since check_mk is still 2.7 and we need the u flag on the string
-            "  ('{0[0]}', u'{0[1]}'),".format(aux_tag),
+            "  ('{name}', u'{description}'),".format(
+                name=aux_tag,
+                description=aux_tag_config.get('description', ''),
+            ),
         ]
 
     files['{}/etc/check_mk/multisite.d/wato/hosttags.mk'.format(site_folder)] = {
@@ -503,7 +585,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                              ) + '\n',
         'owner': site,
         'group': site,
-        'mode': '0660',
+        'mode': '0640',
         'needs': [
             'action:check_mk_create_{}_site'.format(site)
         ],
@@ -525,7 +607,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                              ) + '\n',
         'owner': site,
         'group': site,
-        'mode': '0660',
+        'mode': '0640',
         'needs': [
             'action:check_mk_create_{}_site'.format(site)
         ],
@@ -551,7 +633,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         ]) + '\n',
         'owner': site,
         'group': site,
-        'mode': '0660',
+        'mode': '0640',
         'needs': [
             'action:check_mk_create_{}_site'.format(site)
         ],
@@ -633,7 +715,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         ]) + '\n',
         'owner': site,
         'group': site,
-        'mode': '0660',
+        'mode': '0640',
         'needs': [
             'action:check_mk_create_{}_site'.format(site)
         ],
@@ -644,7 +726,10 @@ for site, site_config in check_mk_config.get('sites', {}).items():
 
     define_hostgroups = []
     hostgroups = []
-    for host_group, host_group_config in sorted(site_config.get('host_groups', {}).items(), key=sort_by_prio):
+    for host_group, host_group_config in sorted(
+            merge_dict(check_mk_config.get('host_groups', {}), site_config.get('host_groups', {})).items(),
+            key=sort_by_prio):
+
         define_hostgroups += [
             "  '{}': u'{}',".format(host_group, host_group_config.get('description', {})),
         ]
@@ -668,7 +753,10 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         "  ('all', [], ALL_HOSTS, ALL_SERVICES, {'description': u'admins'}),",
     ]
 
-    for contact_group, contact_group_config in sorted(site_config.get('contact_groups', {}).items(), key=sort_by_prio):
+    for contact_group, contact_group_config in sorted(
+            merge_dict(check_mk_config.get('contact_groups', {}), site_config.get('contact_groups', {})).items(),
+            key=sort_by_prio):
+
         define_contactgroups += [
             "  '{}': u'{}',".format(contact_group, contact_group_config.get('description', {})),
         ]
@@ -726,7 +814,6 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         ],
     }
 
-    # TODO: conf.d/wato/notify.mk
     rules = [
         '# Written by Bundlewrap',
         '# encoding: utf-8',
@@ -759,7 +846,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         '',
     ]
 
-    rules += generate_rules(check_mk_config.get('global_rules', {}), site_config.get('rules', {}))
+    rules += generate_rules(merge_dict(check_mk_config.get('global_rules', {}), site_config.get('rules', {})))
 
     files['{}/etc/check_mk/conf.d/wato/rules.mk'.format(site_folder)] = {
         'content': '\n'.join(rules) + '\n',
@@ -785,7 +872,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             ],
         }
 
-        rules = generate_rules(check_mk_config.get('global_rules', {}), folder_config.get('rules', {}))
+        rules = generate_rules(folder_config.get('rules', {}))
 
         files['{}/etc/check_mk/conf.d/wato/{}/rules.mk'.format(site_folder, folder)] = {
             'content': '\n'.join(rules) + '\n',
@@ -845,12 +932,14 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             tags = host.get('tags', [])
             attributes = host.get('attributes', {})
 
-            for name, description, values in sorted(site_tags, key=lambda x: x[0]):
+            for name, tag_config in sorted(site_tags.items(), key=sort_by_prio):
+                description = tag_config.get('description', None)
+                subtags = tag_config.get('subtags', [])
                 # if it is configured, do not change
                 if 'tag_{}'.format(name) not in attributes:
-                    for tagname, descr, tag in values:
-                        if tagname in tags:
-                            attributes['tag_{}'.format(name)] = tagname
+                    for subtag_name, subtag_config in subtags.items():
+                        if subtag_name in tags:
+                            attributes['tag_{}'.format(name)] = subtag_name
                             break
                     else:
                         attributes['tag_{}'.format(name)] = None
@@ -965,166 +1054,144 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         }
 
     # mkevent.d
-    # TODO: check if we want to write to mkevent.d/wato/rules
-    # rules += []
-    # rule_packs += [
-    #     {'disabled': False, 'rules': [
-    #         {
-    #             'comment': u'',
-    #             'count': {
-    #                 'count': 1,
-    #                 'algorithm': 'interval',
-    #                 'period': 86400,
-    #                 'separate_application': True,
-    #                 'count_ack': False,
-    #                 'separate_match_groups': True,
-    #                 'separate_host': True
-    #             },
-    #             'cancel_action_phases': 'always',
-    #             'set_application': u'auth',
-    #             'description': u'Authentication Failed',
-    #             'autodelete': False,
-    #             'cancel_actions': [],
-    #             'drop': False,
-    #             'match_application': u'1.3.6.1.6.3.1.1.5.5',
-    #             'hits': 0,
-    #             'actions': [],
-    #             'invert_matching': False,
-    #             'disabled': False,
-    #             'state': 2,
-    #             'match_facility': 31,
-    #             'sl': 0,
-    #             'docu_url': '',
-    #             'id': 'auth_fail',
-    #             'match': u''
-    #         },
-    #         {
-    #             'comment': u'',
-    #             'set_application': u'link',
-    #             'cancel_action_phases': 'always',
-    #             'docu_url': '',
-    #             'description': u'Generate Error when link goes down',
-    #             'autodelete': False,
-    #             'cancel_actions': [],
-    #             'drop': False,
-    #             'match_ok': u'1.3.6.1.2.1.2.2.1.8.[0-9]+: 2',
-    #             'hits': 2,
-    #             'actions': [],
-    #             'id': 'link_up',
-    #             'disabled': True,
-    #             'state': 1,
-    #             'match_facility': 31,
-    #             'sl': 0,
-    #             'match_application': u'1.3.6.1.6.3.1.1.5.[34]',
-    #             'invert_matching': False,
-    #             'match': u'1.3.6.1.2.1.2.2.1.8.[0-9]+: [12]'
-    #         },
-    #         {
-    #             'comment': u'',
-    #             'set_application': u'link',
-    #             'cancel_action_phases': 'always',
-    #             'docu_url': '',
-    #             'description': u'Generate Error when link goes down',
-    #             'autodelete': False,
-    #             'cancel_actions': [],
-    #             'drop': False,
-    #             'match_ok': u'1.3.6.1.2.1.2.2.1.8.[0-9]+: 1',
-    #             'hits': 0,
-    #             'actions': [],
-    #             'id': 'link_down',
-    #             'disabled': True,
-    #             'state': 1,
-    #             'match_facility': 31,
-    #             'sl': 0,
-    #             'match_application': u'1.3.6.1.6.3.1.1.5.[34]',
-    #             'invert_matching': False,
-    #             'match': u'1.3.6.1.2.1.2.2.1.8.[0-9]+: ([12])'
-    #         },
-    #         {
-    #             'comment': u'',
-    #             'set_application': u'link',
-    #             'cancel_action_phases': 'always',
-    #             'docu_url': '',
-    #             'description': u'Generate Warning when link goes up',
-    #             'autodelete': False,
-    #             'cancel_actions': [],
-    #             'drop': False,
-    #             'hits': 0,
-    #             'actions': [],
-    #             'id': 'link_up_warn',
-    #             'disabled': False,
-    #             'state': 1,
-    #             'match_facility': 31,
-    #             'sl': 0,
-    #             'match_application': u'1.3.6.1.6.3.1.1.5.4',
-    #             'set_text': u'Link of Port \\1 is up (\\2)',
-    #             'invert_matching': False,
-    #             'match': u'1.3.6.1.2.1.2.2.1.8.([0 - 9] +): ([12])'
-    #         },
-    #         {
-    #             'comment': u'',
-    #             'set_application': u'link',
-    #             'cancel_action_phases': 'always',
-    #             'description': u'GenerateWarningwhenlinkgoesup / down',
-    #             'autodelete': False,
-    #             'cancel_actions': [],
-    #             'drop': False,
-    #             'match_application': u'1.3.6.1.6.3.1.1.5.3',
-    #             'actions': [],
-    #             'invert_matching': False,
-    #             'disabled': False,
-    #             'state': 1,
-    #             'match_facility': 31,
-    #             'sl': 0,
-    #             'docu_url': '',
-    #             'set_text': u'LinkofPort \\1 is down(\\2)',
-    #             'id': 'link_down_warn',
-    #             'match': u'1.3.6.1.2.1.2.2.1.8.([0 - 9] +): ([12])'
-    #         },
-    #         {
-    #             'comment': u'',
-    #             'set_application': u'link',
-    #             'cancel_action_phases': 'always',
-    #             'description': u'GenerateWarningwhenlinkgoesup / down',
-    #             'autodelete': False,
-    #             'cancel_actions': [],
-    #             'drop': False,
-    #             'match_application': u'1.3.6.1.6.3.1.1.5.[34]',
-    #             'hits': 3,
-    #             'actions': [],
-    #             'invert_matching': False,
-    #             'disabled': False,
-    #             'state': 1,
-    #             'match_facility': 31,
-    #             'sl': 0,
-    #             'docu_url': '',
-    #             'set_text': u'LinkofPort \\1 is \\2',
-    #             'id': 'link',
-    #             'match': u'1.3.6.1.2.1.2.2.1.8.([0 - 9] +): ([12])'
-    #         },
-    #         {
-    #             'comment': u'',
-    #             'hits': 18,
-    #             'description': u'logallSNMPTraps',
-    #             'autodelete': False,
-    #             'cancel_actions': [],
-    #             'drop': False,
-    #             'cancel_action_phases': 'always',
-    #             'actions': [],
-    #             'invert_matching': False,
-    #             'disabled': False,
-    #             'state': -1,
-    #             'match_facility': 31,
-    #             'sl': 0,
-    #             'docu_url': '',
-    #             'id': 'snmp_log',
-    #             'match': u''
-    #         }
-    #     ],
-    #      'hits': 24,
-    #      'id': 'snmp_traps',
-    #      'title': u'SNMPTraps'
-    #      }
-    # ]
+    # TODO: generate from metadata
+    global_rules = []
+    rule_packs = [
+        {'disabled': False,
+         'rules': [
+             {
+                 'comment': '',
+                 'count': {
+                     'count': 1,
+                     'algorithm': 'interval',
+                     'period': 86400,
+                     'separate_application': True,
+                     'count_ack': False,
+                     'separate_match_groups': True,
+                     'separate_host': True
+                 },
+                 'cancel_action_phases': 'always',
+                 'set_application': 'auth',
+                 'description': 'Authentication Failed',
+                 'autodelete': False,
+                 'cancel_actions': [],
+                 'drop': False,
+                 'match_application': '1.3.6.1.6.3.1.1.5.5',
+                 'hits': 0,
+                 'actions': [],
+                 'invert_matching': False,
+                 'disabled': False,
+                 'state': 2,
+                 'sl': 0,
+                 'docu_url': '',
+                 'id': 'auth_fail',
+                 'match': ''
+             },
+             {
+                 'comment': '',
+                 'set_application': 'link',
+                 'cancel_action_phases': 'always',
+                 'docu_url': '',
+                 'description': 'Generate Warning when link goes up',
+                 'autodelete': False,
+                 'cancel_actions': [],
+                 'drop': False,
+                 'hits': 0,
+                 'actions': [],
+                 'id': 'link_up_warn',
+                 'disabled': False,
+                 'state': 1,
+                 'sl': 0,
+                 'match_application': '1.3.6.1.6.3.1.1.5.4',
+                 'set_text': 'Link of Port \\1 is up (\\2)',
+                 'invert_matching': False,
+                 'match': '1.3.6.1.2.1.2.2.1.8.([0-9]+): ([12])'
+             },
+             {
+                 'comment': '',
+                 'set_application': 'link',
+                 'cancel_action_phases': 'always',
+                 'description': 'Generate Warning when link goes down',
+                 'autodelete': False,
+                 'cancel_actions': [],
+                 'drop': False,
+                 'match_application': '1.3.6.1.6.3.1.1.5.3',
+                 'actions': [],
+                 'invert_matching': False,
+                 'disabled': False,
+                 'state': 1,
+                 'sl': 0,
+                 'docu_url': '',
+                 'set_text': 'Link of Port \\1 is down (\\2)',
+                 'id': 'link_down_warn',
+                 'match': '1.3.6.1.2.1.2.2.1.8.([0-9]+): ([12])'
+             },
+             {
+                 'comment': '',
+                 'set_application': 'link',
+                 'cancel_action_phases': 'always',
+                 'description': 'Generate Warning when link goes up / down',
+                 'autodelete': False,
+                 'cancel_actions': [],
+                 'drop': False,
+                 'match_application': '1.3.6.1.6.3.1.1.5.[34]',
+                 'hits': 3,
+                 'actions': [],
+                 'invert_matching': False,
+                 'disabled': False,
+                 'state': 1,
+                 'sl': 0,
+                 'docu_url': '',
+                 'set_text': 'Link of Port \\1 is \\2',
+                 'id': 'link',
+                 'match': '1.3.6.1.2.1.2.2.1.8.([0-9]+): ([12])'
+             },
+             {
+                 'comment': '',
+                 'hits': 18,
+                 'description': 'localSNMPTraps',
+                 'autodelete': False,
+                 'cancel_actions': [],
+                 'drop': False,
+                 'cancel_action_phases': 'always',
+                 'actions': [],
+                 'invert_matching': False,
+                 'disabled': False,
+                 'state': -1,
+                 'sl': 0,
+                 'docu_url': '',
+                 'id': 'snmp_log',
+                 'match': ''
+             }
+         ],
+         'hits': 24,
+         'id': 'snmp_traps',
+         'title': 'SNMPTraps',
+         }
+    ]
+
+    files['{}/etc/check_mk/mkeventd.d/wato/rules.mk'.format(site_folder)] = {
+        'content': '\n'.join([
+            '# Written by Bundlewrap',
+            '# encoding: utf-8',
+            '',
+            'rules += [',
+            ',\n'.join(global_rules),
+            ']',
+            '',
+            'rule_packs += [',
+            ',\n'.join(map(lambda x: str(x), rule_packs)),
+            ']',
+        ]) + '\n',
+        'owner': site,
+        'group': site,
+        'mode': '0640',
+        'needs': [
+            'action:check_mk_create_{}_site'.format(site)
+        ],
+        'triggers': [
+            'action:check_mk_recompile_{}_site'.format(site),
+        ],
+    }
 
     # TODO: patch sha512 support into htpasswd authentication ( ~/share/check_mk/web/plugins/userdb/htpasswd.py )

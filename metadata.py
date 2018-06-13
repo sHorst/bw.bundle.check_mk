@@ -121,6 +121,13 @@ def add_iptables_rules(metadata):
     # add ipTables rules
     if node.has_bundle("iptables"):
         for interface in interfaces:
+            # allow snmp traps
+            metadata += repo.libs.iptables.accept(). \
+                input(interface). \
+                state_new(). \
+                udp(). \
+                dest_port(162)
+
             for server in check_mk_livestatus_server:
                 for ip in server.get('ips'):
                     for port in ports:
