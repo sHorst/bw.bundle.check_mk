@@ -412,6 +412,9 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             'filesystem_default_levels["levels"] = ( 95.0, 99.0 )',
             # "ntp_default_levels = (15, 500.0, 1000.0)",
             "if_inventory_portstates = ['1', '2', '5']",
+            ] +
+            site_config.get('extra_nagios_config', []) +
+            [
         ]) + '\n',
         'owner': site,
         'group': site,
