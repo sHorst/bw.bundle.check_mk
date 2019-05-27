@@ -228,7 +228,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         + '\'roles\': [\'admin\'], '
         + '\'language\': \'en\', '
         + '\'automation_secret\': \''
-        + repo.libs.pw.get('check_mk_automation_secret_{}_{}'.format(node.name, site))
+        + repo.vault.password_for('check_mk_automation_secret_{}_{}'.format(node.name, site)).value
         + '\'},',
     ]
 
@@ -311,14 +311,14 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             '},',
         ]
 
-        salt = repo.libs.pw.get(
+        salt = repo.vault.password_for(
             'check_mk_node_{}_site_{}_user_{}_salt'.format(node.name, site, admin),
             length=8,
-        )
+        ).value
 
         passwd = admin_config.get(
             'password',
-            repo.libs.pw.get('check_mk_node_{}_site_{}_user_{}_password').format(node.name, site, admin)
+            repo.vault.password_for('check_mk_node_{}_site_{}_user_{}_password').format(node.name, site, admin)
         )
 
         # NEEDS to be md5, since check_mk only knows how to deal with those
@@ -341,14 +341,14 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             )
         ]
 
-        salt = repo.libs.pw.get(
+        salt = repo.vault.password_for(
             'check_mk_node_{}_site_{}_user_{}_salt'.format(node.name, site, user),
             length=8,
         )
 
         passwd = user_config.get(
             'password',
-            repo.libs.pw.get('check_mk_node_{}_site_{}_user_{}_password').format(node.name, site, user)
+            repo.vault.password_for('check_mk_node_{}_site_{}_user_{}_password').format(node.name, site, user)
         )
 
         # NEEDS to be md5, since check_mk only knows how to deal with those
