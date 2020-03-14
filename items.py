@@ -265,6 +265,18 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         ],
     }
 
+    for icon in ['debian.png', 'netgear.png', 'ubnt.png', 'vmware.png', 'vmware2.png']:
+        files['{site_folder}/local/share/check_mk/web/htdocs/images/icons/{icon}'.format(site_folder=site_folder, icon=icon)] = {
+            'source': 'icons/{icon}'.format(icon=icon),
+            'owner': site,
+            'group': site,
+            'mode': '0644',
+            'content_type': 'binary',
+            'needs': [
+                'action:check_mk_create_{}_site'.format(site)
+            ],
+        }
+
     htpasswd = []
     check_mk_users = [
         '\'automation\': {'
@@ -415,6 +427,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         'ADMIN_MAIL': admin_email,
         'LIVESTATUS_TCP': 'on' if site_config.get('livestatus', False) else 'off',
         'LIVESTATUS_TCP_PORT': site_config.get('livestatus_port', 6557),
+        'LIVESTATUS_TCP_TLS': 'on',
         'MKEVENTD_SNMPTRAP': 'on',
     }
 
@@ -477,38 +490,39 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         "  '{}': {{".format(site),
         "    'status_host': None,",
         "    'user_sync': 'all',",
-        "    'replication': '',",
+        "    'replication': None,",
         "    'user_login': True,",
         "    'insecure': False,",
         "    'disable_wato': True,",
         "    'disabled': False,",
         "    'alias': u'Local site {}',".format(site),
         "    'replicate_mkps': False,",
+        "    'socket': ('local', None),",
         "    'timeout': 10,",
         "    'persist': False,",
         "    'replicate_ec': False,",
-        "    'multisiteurl': ''",
-        "},",
+        "    'multisiteurl': '',",
+        "  },",
     ]
 
     for server in site_config.get('livestatus_server'):
         multisites += [
-            "  '{}_on_{}': {{".format(server.get('site', ''), server.get('name', '')),
+            "  '{}_on_{}': {{".format(server.get('site', ''), server.get('name', '').replace('.', '_')),
             "    'status_host': None,",
             "    'user_sync': 'all',",
             "    'user_login': True,",
             "    'insecure': False,",
             "    'disabled': False,",
-            "    'replication': '',",
+            "    'replication': None,",
             "    'multisiteurl': '',",
             "    'replicate_mkps': True,",
             "    'url_prefix': 'https://{}/{}/',".format(server.get('hostname', ''), server.get('site', '')),
-            "    'socket': 'tcp:{}:{}',".format(server.get('ips', [])[0], server.get('port', 6557)),
+            "    'socket': {},".format(('tcp', {'tls': ('encrypted', {'verify': False}), 'address': (server.get('ips', [])[0], server.get('port', 6557))})),
             "    'disable_wato': True,",
             "    'alias': u'{} on {}',".format(server.get('site', ''), server.get('name', '')),
             "    'timeout': 10,",
             "    'persist': True,",
-            "    'replicate_ec': True",
+            "    'replicate_ec': True,",
             "  },",
         ]
 
@@ -698,6 +712,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             "  'contact_all': False,",
             "  'contact_all_with_email': False,",
             "  'contact_object': True,",
+            "  'contact_match_groups': {contact_match_groups},".format(contact_match_groups=['all']),
             "  'description': u'html',",
             "  'disabled': False,",
             "  'docu_url': '',",
