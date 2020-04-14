@@ -169,12 +169,6 @@ if CHECK_MK_VERSION not in supported_versions.keys():
 CHECK_MK_DEB_FILE = 'check-mk-raw-{}_0.buster_amd64.deb'.format(CHECK_MK_VERSION)
 CHECK_MK_DEB_FILE_SHA256 = supported_versions[CHECK_MK_VERSION]
 
-pkg_apt = {
-    'gdebi-core': {
-        'installed': True,
-    }
-}
-
 files = {}
 directories = {}
 downloads = {

@@ -12,6 +12,18 @@ def add_dehydrated_hook(metadata):
 
 
 @metadata_processor
+def add_apt_packages(metadata):
+    # TODO: add support for other package managers as well
+    if node.has_bundle("apt"):
+        metadata.setdefault('apt', {})
+        metadata['apt'].setdefault('packages', {})
+
+        metadata['apt']['packages']['gdebi-core'] = {'installed': True}
+
+    return metadata, DONE
+
+
+@metadata_processor
 def add_dehydrated_domains(metadata):
     if node.has_bundle('dehydrated'):
         metadata.setdefault('dehydrated', {}).setdefault('domains', [])
