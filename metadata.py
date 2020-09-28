@@ -1,44 +1,49 @@
-
-@metadata_processor
-def add_dehydrated_hook(metadata):
-    if node.has_bundle('dehydrated'):
-        metadata.setdefault('dehydrated', {})\
-            .setdefault('hooks', {})\
-            .setdefault('deploy_cert', {})
-
-        metadata['dehydrated']['hooks']['deploy_cert']['apache'] = ['service apache2 restart', ]
-
-    return metadata, DONE
+defaults = {}
+if node.has_bundle('dehydrated'):
+    defaults['dehydrated'] = {
+        'hooks': {
+            'deploy_cert': {
+                'apache': ['service apache2 restart', ],
+            }
+        }
+    }
 
 
-@metadata_processor
-def add_apt_packages(metadata):
-    # TODO: add support for other package managers as well
-    if node.has_bundle("apt"):
-        metadata.setdefault('apt', {})
-        metadata['apt'].setdefault('packages', {})
-
-        metadata['apt']['packages']['gdebi-core'] = {'installed': True}
-
-    return metadata, DONE
+if node.has_bundle("apt"):
+    defaults['apt'] = {
+        'packages': {
+            'gdebi-core': {'installed': True}
+        }
+    }
 
 
-@metadata_processor
+@metadata_reactor
 def add_dehydrated_domains(metadata):
-    if node.has_bundle('dehydrated'):
-        metadata.setdefault('dehydrated', {}).setdefault('domains', [])
-        for vhost_name, vhost in metadata.get('apache', {}).get('vhosts', {}).items():
-            if vhost.get('ssl', False):
-                metadata['dehydrated']['domains'].append('{} {}'
-                                                         .format(vhost_name, ' '.join(vhost.get('aliases', [])))
-                                                         .strip())
+    if not node.has_bundle('dehydrated'):
+        raise DoNotRunAgain
 
-    return metadata, DONE
+    domains = []
+
+    for vhost_name, vhost in metadata.get('apache/vhosts', {}).items():
+        if vhost.get('ssl', False):
+            domain_name = '{} {}'.format(vhost_name, ' '.join(vhost.get('aliases', []))).strip()
+            if domain_name not in domains:
+                domains.append(domain_name)
+
+    return {
+        'dehydrated': {
+            'domains': domains,
+        }
+    }
 
 
-@metadata_processor
+@metadata_reactor
 def find_hosts_to_monitor(metadata):
-    for site, site_config in metadata.get('check_mk', {}).get('sites', {}).items():
+    sites = {}
+    for site, site_config in metadata.get('check_mk/sites', {}).items():
+        sites[site] = {
+            'folders': {},
+        }
         for folder, folder_config in site_config.get('folders').items():
             if not folder_config.get('generated', False):
                 continue
@@ -65,21 +70,27 @@ def find_hosts_to_monitor(metadata):
                     continue
 
                 if checked_node.partial_metadata == {}:
-                    return metadata, RUN_ME_AGAIN
+                    continue
 
                 # if node.name in checked_node.partial_metadata.get('check_mk', {}).get('servers', []):
                 hosts += [checked_node.name, ]
 
-            metadata['check_mk']['sites'][site]['folders'][folder]['hosts'] = hosts
-            metadata['check_mk']['sites'][site]['folders'][folder]['already_generated'] = True
+            sites[site]['folders'][folder] = {
+                'hosts': hosts,
+                'already_generated': True,
+            }
 
-    return metadata, DONE
+    return {
+        'check_mk': {
+            'sites': sites,
+        }
+    }
 
 
-@metadata_processor
+@metadata_reactor
 def add_iptables_rules(metadata):
     interfaces = [metadata.get('main_interface'), ]
-    interfaces += metadata['check_mk'].get('additional_interfaces', [])
+    interfaces += metadata.get('check_mk/additional_interfaces', [])
 
     # find server for livestatus
     check_mk_livestatus_server = []
@@ -93,7 +104,7 @@ def add_iptables_rules(metadata):
             continue
 
         if tnode.partial_metadata == {}:
-            return metadata, RUN_ME_AGAIN
+            return {}
 
         # find ips for server
         check_mk_server_ips = []
@@ -118,23 +129,27 @@ def add_iptables_rules(metadata):
 
             check_mk_livestatus_ips += check_mk_server_ips
 
+    sites = {}
     # add all found server to our own list
-    for site, site_config in metadata.get('check_mk', {}).get('sites', {}).items():
+    for site, site_config in metadata.get('check_mk/sites', {}).items():
         if not site_config.get('livestatus', False):
             continue
 
-        metadata['check_mk']['sites'][site]['livestatus_server'] = check_mk_livestatus_server
-        metadata['check_mk']['sites'][site]['livestatus_allowed_ips'] = list(dict.fromkeys(check_mk_livestatus_ips))
+        sites[site] = {
+            'livestatus_server': check_mk_livestatus_server,
+            'livestatus_allowed_ips': list(dict.fromkeys(check_mk_livestatus_ips)),
+        }
 
     ports = set()
-    for site, site_config in metadata['check_mk'].get('sites', {}).items():
+    for site, site_config in metadata.get('check_mk/sites', {}).items():
         ports.add(site_config.get('livestatus_port', 6557))
 
+    iptables_rules = {}
     # add ipTables rules
     if node.has_bundle("iptables"):
         for interface in interfaces:
             # allow snmp traps
-            metadata += repo.libs.iptables.accept(). \
+            iptables_rules += repo.libs.iptables.accept(). \
                 input(interface). \
                 state_new(). \
                 udp(). \
@@ -143,13 +158,19 @@ def add_iptables_rules(metadata):
             for server in check_mk_livestatus_server:
                 for ip in server.get('ips'):
                     for port in ports:
-                        metadata += repo.libs.iptables.accept(). \
+                        iptables_rules += repo.libs.iptables.accept(). \
                             input(interface). \
                             state_new(). \
                             tcp(). \
                             source(ip). \
                             dest_port(port)
 
-    return metadata, DONE
+    return {
+        'check_mk': {
+            'sites': sites,
+        },
+        'iptables': iptables_rules['iptables'],
+    }
+
 
 
