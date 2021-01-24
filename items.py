@@ -158,6 +158,7 @@ check_mk_config = node.metadata.get('check_mk', {})
 CHECK_MK_VERSION = check_mk_config.get('version', '1.6.0p9')
 
 if CHECK_MK_VERSION not in supported_versions.keys():
+    # TODO: fix this error
     raise BundleError(_(
         "unsupported version {version} for {item} in bundle '{bundle}'"
     ).format(
@@ -166,7 +167,8 @@ if CHECK_MK_VERSION not in supported_versions.keys():
         item=item_id,
     ))
 
-CHECK_MK_DEB_FILE = 'check-mk-raw-{}_0.buster_amd64.deb'.format(CHECK_MK_VERSION)
+RELEASE_NAME = node.metadata.get(node.os, {}).get('release_name', 'jessi')
+CHECK_MK_DEB_FILE = f'check-mk-raw-{CHECK_MK_VERSION}_0.{RELEASE_NAME}_amd64.deb'
 CHECK_MK_DEB_FILE_SHA256 = supported_versions[CHECK_MK_VERSION]
 
 files = {}
@@ -175,9 +177,6 @@ downloads = {
     '/opt/{}'.format(CHECK_MK_DEB_FILE): {
         'url': 'https://mathias-kettner.de/support/{}/{}'.format(CHECK_MK_VERSION, CHECK_MK_DEB_FILE),
         'sha256': CHECK_MK_DEB_FILE_SHA256,
-        'needs': [
-            'pkg_apt:gdebi-core',
-        ],
     }
 }
 
@@ -273,18 +272,23 @@ for site, site_config in check_mk_config.get('sites', {}).items():
 
     htpasswd = []
     check_mk_users = [
-        '\'automation\': {'
+        'u\'automation\': {'
         + '\'alias\': u\'Check_MK Automation - used for calling web services\', '
         + '\'locked\': False, '
-        + '\'roles\': [\'admin\'], '
         + '\'language\': \'en\', '
+        + '\'roles\': [\'admin\'], '
         + '\'automation_secret\': \''
         + repo.vault.password_for('check_mk_automation_secret_{}_{}'.format(node.name, site)).value
         + '\'},',
     ]
 
     contacts = [
-        "'automation': {'alias': u'Check_MK Automation - used for calling web services', 'notifications_enabled': False, 'pager': '', 'email': u'', 'contactgroups': []},",
+        "u'automation': {"
+        "'alias': u'Check_MK Automation - used for calling web services', "
+        "'notifications_enabled': False, "
+        "'pager': '', "
+        "'email': u'stefan@ultrachaos.de', "  # TODO: can be removed
+        "'contactgroups': []},",
     ]
 
     for admin in site_config.get('admins', []):
@@ -293,10 +297,16 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             continue
 
         check_mk_users += [
-            'u\'{user}\': {{\'alias\': u\'{alias}\', \'locked\': False, \'roles\': [\'admin\']}}, '.format(
-                user=admin,
-                alias=admin_config.get('alias', admin),
-            ),
+            # 'force_authuser_webservice': False, 'locked': False, 'roles': ['admin'], 'force_authuser': False, 'ui_theme': None, 'alias': u'Stefan Horst', 'start_url': None
+            f'u\'{admin}\': {{'
+            + '\'force_authuser_webservice\': False, '
+            + '\'locked\': False, '
+            + '\'roles\': [\'admin\'], '
+            + '\'force_authuser\': False, '
+            + '\'ui_theme\': None, '
+            + '\'alias\': u\'{alias}\', '.format(alias=admin_config.get('alias', admin))
+            + '\'start_url\': None'
+            + '}, '
         ]
 
         contacts += [
@@ -306,7 +316,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             "  'alias': u'{alias}',".format(
                 alias=admin_config.get('alias', admin),
             ),
-            "  'disable_notifications': {},".format(admin_config.get('disable_notifications', False)),
+            "  'disable_notifications': {},",  # .format(admin_config.get('disable_notifications', False)),
             "  'email': u'{email}',".format(
                 email=admin_config.get('email', ''),
             ),
@@ -331,8 +341,8 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             if notification_rule_config.get('type', '') == 'pushover':
                 contacts += [
                     "    {",
-                    "      'comment': u'{}',".format(notification_rule),
-                    "      'contact_users': [u'{}'],".format(admin),
+                    f"      'comment': u'{notification_rule}',",
+                    f"      'contact_users': [u'{admin}'],",
                     "      'description': u'{}',".format(notification_rule_config.get('description', notification_rule)),
                     "      'disabled': False,",
                     "      'docu_url': '',",
@@ -343,7 +353,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                     "        {",
                     "          'api_key': '{}',".format(notification_rule_config.get('api_key', '')),
                     "          'recipient_key': '{}',".format(notification_rule_config.get('recipient_key', '')),
-                    "          'url_prefix': '{}/check_mk/'".format(site_url),
+                    f"          'url_prefix': '{site_url}check_mk/'",
                     "        },",
                     "      ),",
                     "    },",
@@ -612,10 +622,11 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             ) + '}',
         ]
 
-    wato_tags_update = '{' + "'aux_tags': [{aux_tags}], 'tag_groups': [{tag_groups}]".format(
-        aux_tags=', '.join(wato_aux_tags),
-        tag_groups=', '.join(wato_host_tags),
-    ) + '}'
+    wato_tags_update = '{' + "\n    'aux_tags': [\n        {aux_tags}\n    ]" \
+                             ",\n    'tag_groups': [\n        {tag_groups}\n    ]".format(
+                                aux_tags=",\n        ".join(wato_aux_tags),
+                                tag_groups=",\n        ".join(wato_host_tags),
+                             ) + '\n}'
 
     files['{}/etc/check_mk/multisite.d/wato/tags.mk'.format(site_folder)] = {
         'content': '\n'.join([
@@ -701,16 +712,18 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             '# Written by Bundlewrap',
             '# encoding: utf-8',
             '',
-            "notification_rules += [{'allow_disable': True,",
+            "notification_rules += [{",
+            "  'allow_disable': True,",
             "  'comment': u'',",
             "  'contact_all': False,",
             "  'contact_all_with_email': False,",
             "  'contact_object': True,",
-            "  'contact_match_groups': {contact_match_groups},".format(contact_match_groups=['all']),
+            # "  'contact_match_groups': {contact_match_groups},".format(contact_match_groups=['all']),
             "  'description': u'html',",
             "  'disabled': False,",
             "  'docu_url': '',",
-            "  'notify_plugin': (u'mail', {})}]",
+            "  'notify_plugin': (u'mail', {})",
+            "}]",
         ]) + '\n',
         'owner': site,
         'group': site,
@@ -829,10 +842,10 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         "  'all': u'Everything',",
     ]
     host_contactgroups = [
-        "{'condition': {}, 'options': {'description': u'Admins'}, 'value': 'all'}",
+        # "{'condition': {}, 'options': {'description': u'Admins'}, 'value': 'notification'}",
     ]
     service_contactgroups = [
-        "{'condition': {}, 'options': {'description': u'admins'}, 'value': 'all'}",
+        # "{'condition': {}, 'options': {'description': u'admins'}, 'value': 'notification'}",
     ]
 
     for contact_group, contact_group_config in sorted(
@@ -846,14 +859,14 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             "{{'condition': {{{condition}}}, 'options': {{'description': u'{description}'}}, 'value': '{name}'}}".format(
                 name=contact_group,
                 condition=contact_group_config.get('hosts', {}).get('condition', ''),
-                description=contact_group_config.get('hosts', {}).get('description', {})
+                description=contact_group_config.get('hosts', {}).get('description', '')
             ),
         ]
         service_contactgroups += [
             "{{'condition': {{{condition}}}, 'options': {{'description': u'{description}'}}, 'value': '{name}'}}".format(
                 name=contact_group,
                 condition=contact_group_config.get('services', {}).get('condition', ''),
-                description=contact_group_config.get('services', {}).get('description', {})
+                description=contact_group_config.get('services', {}).get('description', '')
             ),
         ]
 
@@ -942,13 +955,11 @@ for site, site_config in check_mk_config.get('sites', {}).items():
 
         files['{}/etc/check_mk/conf.d/wato/{}/.wato'.format(site_folder, folder)] = {
             'content': '\n'.join([
-                "{{"
-                "'lock': False, 'attributes': {{}}, "
-                "'num_hosts': {num_hosts}, 'lock_subfolders': False, "
-                "'title': u'{title}'}}".format(
-                    num_hosts=len(folder_config.get('hosts', [])),
-                    title=folder,
-                )
+                "{'attributes': {'meta_data': {'created_at': None, 'created_by': None}},",
+                " 'lock': False,",
+                " 'lock_subfolders': False,",
+                " 'num_hosts': {num_hosts},".format(num_hosts=len(folder_config.get('hosts', []))),
+                " 'title': u'{title}'}}".format(title=folder),
             ]) + '\n',
             'owner': site,
             'group': site,
@@ -968,6 +979,8 @@ for site, site_config in check_mk_config.get('sites', {}).items():
 
         ipaddresses = {}
         snmp_communities = {}
+        management_ipmi_credentials = {}
+        management_protocol = {}
 
         rediscover_hosts = []
         for host in sorted(folder_config.get('hosts', []), key=sort_hostnames):
@@ -1042,6 +1055,13 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                 snmp_communities[host['hostname']] = snmp_community
                 attributes['snmp_community'] = snmp_community
 
+            if host.get('management_ipmi_credentials', None):
+                management_ipmi_credentials[host['hostname']] = host['management_ipmi_credentials']
+                attributes['management_ipmi_credentials'] = host['management_ipmi_credentials']
+
+                management_protocol[host['hostname']] = 'ipmi'
+                attributes['management_protocol'] = 'ipmi'
+
             if attributes:
                 host_attributes += [
                     "'{hostname}': {attributes}".format(
@@ -1067,7 +1087,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             '',
             "all_hosts += [" + ', '.join(sorted(all_hosts)) + ']',
             '',
-            "host_tags.update({" + ', '.join(update_host_tags) + '})',
+            "host_tags.update({\n    " + ",\n    ".join(update_host_tags) + "\n})",
             "",
             'host_labels.update({})',
             "",
@@ -1087,6 +1107,20 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                 '',
             ]
 
+        if management_ipmi_credentials:
+            hosts_content += [
+                "# Management board IPMI credentials",
+                "management_ipmi_credentials.update({})".format(management_ipmi_credentials),
+                '',
+            ]
+
+        if management_protocol:
+            hosts_content += [
+                "# Management board protocol",
+                "management_protocol.update({})".format(management_protocol),
+                '',
+            ]
+
         if extra_host_config_parents:
             hosts_content += [
                                  "",
@@ -1096,9 +1130,9 @@ for site, site_config in check_mk_config.get('sites', {}).items():
 
         hosts_content += [
             "# Host attributes (needed for WATO)",
-            "host_attributes.update(",
-            "{" + ", ".join(host_attributes) + "}",
-            ")",
+            "host_attributes.update({",
+            "    " + ",\n    ".join(host_attributes),
+            "})",
             ]
 
         files['{}/etc/check_mk/conf.d/wato/{}/hosts.mk'.format(site_folder, folder)] = {

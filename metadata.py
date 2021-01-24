@@ -1,13 +1,14 @@
 defaults = {}
-if node.has_bundle('dehydrated'):
-    defaults['dehydrated'] = {
-        'hooks': {
-            'deploy_cert': {
-                'apache': ['service apache2 restart', ],
-            }
-        }
-    }
 
+# if node.has_bundle('dehydrated') and not node.has_bundle('apache'):
+#     defaults['dehydrated'] = {
+#         'hooks': {
+#             'deploy_cert': {
+#                 'apache': ['service apache2 restart', ],
+#             }
+#         }
+#     }
+#
 
 if node.has_bundle("apt"):
     defaults['apt'] = {
@@ -17,29 +18,32 @@ if node.has_bundle("apt"):
     }
 
 
-@metadata_reactor
-def add_dehydrated_domains(metadata):
-    if not node.has_bundle('dehydrated'):
-        raise DoNotRunAgain
-
-    domains = []
-
-    for vhost_name, vhost in metadata.get('apache/vhosts', {}).items():
-        if vhost.get('ssl', False):
-            domain_name = '{} {}'.format(vhost_name, ' '.join(vhost.get('aliases', []))).strip()
-            if domain_name not in domains:
-                domains.append(domain_name)
-
-    return {
-        'dehydrated': {
-            'domains': domains,
-        }
-    }
+# @metadata_reactor
+# def add_dehydrated_domains(metadata):
+#     if not node.has_bundle('dehydrated'):
+#         raise DoNotRunAgain
+#
+#     domains = []
+#
+#     for vhost_name, vhost in metadata.get('apache/vhosts', {}).items():
+#         if vhost.get('ssl', False):
+#             domain_name = '{} {}'.format(vhost_name, ' '.join(vhost.get('aliases', []))).strip()
+#             if domain_name not in domains:
+#                 domains.append(domain_name)
+#
+#     return {
+#         'dehydrated': {
+#             'domains': domains,
+#         }
+#     }
 
 
 @metadata_reactor
 def find_hosts_to_monitor(metadata):
     sites = {}
+    active_checks = {}
+    host_tags = {}
+    host_groups = {}
     for site, site_config in metadata.get('check_mk/sites', {}).items():
         sites[site] = {
             'folders': {},
@@ -75,6 +79,37 @@ def find_hosts_to_monitor(metadata):
                 # if node.name in checked_node.partial_metadata.get('check_mk', {}).get('servers', []):
                 hosts += [checked_node.name, ]
 
+                # collect active Checks
+                for name, checks in checked_node.metadata.get('check_mk/agent/active_checks', {}).items():
+                    active_checks[name] = []
+                    known_ids = []
+                    for check in checks:
+                        check_id = check.get('id', None)
+
+                        # filter duplicates
+                        if check_id is not None and check_id in known_ids:
+                            continue
+
+                        known_ids += [check_id, ]
+
+                        # remove id, if it exist
+                        check.pop('id', None)
+
+                        active_checks[name] += [check, ]
+
+                # collect host_tags
+                for name, tags in checked_node.metadata.get('check_mk/agent/host_tags', {}).items():
+                    if name in host_tags:
+                        host_tags[name].setdefault('subtags', {})
+                        for subtag_name, subtag in tags.get('subtags', {}).items():
+                            host_tags[name]['subtags'][subtag_name] = subtag
+                    else:
+                        host_tags[name] = tags
+
+                # collect host_groups
+                for name, groups in checked_node.metadata.get('check_mk/agent/host_groups', {}).items():
+                    host_groups[name] = groups
+
             sites[site]['folders'][folder] = {
                 'hosts': hosts,
                 'already_generated': True,
@@ -82,6 +117,11 @@ def find_hosts_to_monitor(metadata):
 
     return {
         'check_mk': {
+            'global_rules': {
+                'active_checks': active_checks,
+            },
+            'host_tags': host_tags,
+            'host_groups': host_groups,
             'sites': sites,
         }
     }
