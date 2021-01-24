@@ -5,6 +5,7 @@ supported_versions = {
     '1.4.0p31': 'cbbd46be8b486c12f74e4368a1d8e608864aaa105bf85c165e7604fcba7668f0',
     '1.5.0b3': '3c56922dbd7e95b451f758782b37880649d0adc0ddad43918badf555562b5e27',
     '1.6.0p9': 'ad79a72cc0cc956ee62c18858db99d4e308276823c34968807e9a34b3f13e9db',
+    '1.6.0p20': '49e774966b66653d6fb64f44885efdfc1de20f450cb5e8514db0380a618ca7ab',
 }
 
 
@@ -914,18 +915,23 @@ for site, site_config in check_mk_config.get('sites', {}).items():
     ]
     rules_content += generate_rules(rules)
 
-    files['{}/etc/check_mk/conf.d/wato/rules.mk'.format(site_folder)] = {
-        'content': '\n'.join(rules_content) + '\n',
-        'owner': site,
-        'group': site,
-        'mode': '0660',
-        'needs': [
-            'action:check_mk_create_{}_site'.format(site)
-        ],
-        'triggers': [
-            'action:check_mk_recompile_{}_site'.format(site),
-        ],
-    }
+    if rules_content:
+        files['{}/etc/check_mk/conf.d/wato/rules.mk'.format(site_folder)] = {
+            'content': '\n'.join(rules_content) + '\n',
+            'owner': site,
+            'group': site,
+            'mode': '0660',
+            'needs': [
+                'action:check_mk_create_{}_site'.format(site)
+            ],
+            'triggers': [
+                'action:check_mk_recompile_{}_site'.format(site),
+            ],
+        }
+    else:
+        files['{}/etc/check_mk/conf.d/wato/rules.mk'.format(site_folder)] = {
+            'delete': True,
+        }
 
     # generate folders and hosts
     for folder, folder_config in site_config.get('folders', {}).items():
@@ -940,18 +946,23 @@ for site, site_config in check_mk_config.get('sites', {}).items():
 
         rules = generate_rules(folder_config.get('rules', {}))
 
-        files['{}/etc/check_mk/conf.d/wato/{}/rules.mk'.format(site_folder, folder)] = {
-            'content': '\n'.join(rules) + '\n',
-            'owner': site,
-            'group': site,
-            'mode': '0660',
-            'needs': [
-                'action:check_mk_create_{}_site'.format(site)
-            ],
-            'triggers': [
-                'action:check_mk_recompile_{}_site'.format(site),
-            ],
-        }
+        if rules:
+            files['{}/etc/check_mk/conf.d/wato/{}/rules.mk'.format(site_folder, folder)] = {
+                'content': '\n'.join(rules) + '\n',
+                'owner': site,
+                'group': site,
+                'mode': '0660',
+                'needs': [
+                    'action:check_mk_create_{}_site'.format(site)
+                ],
+                'triggers': [
+                    'action:check_mk_recompile_{}_site'.format(site),
+                ],
+            }
+        else:
+            files['{}/etc/check_mk/conf.d/wato/{}/rules.mk'.format(site_folder, folder)] = {
+                'delete': True,
+            }
 
         files['{}/etc/check_mk/conf.d/wato/{}/.wato'.format(site_folder, folder)] = {
             'content': '\n'.join([
