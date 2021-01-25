@@ -271,7 +271,11 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             ],
         }
 
-    htpasswd = []
+    htpasswd = [
+        'automation:{}'.format(repo.vault.decrypt('encrypt$gAAAAABgDxodxvHVufrBj4NriSk76jJgD0p_-gllfQ1PqDLd0Pd_WsQwDKNr'
+                                                  'E5v4jZewf8by8IgbQKFACLxs2dTtSI_yaPuagSGWidJV5ycY9wldQU7dvfSgQ1UoeAXv'
+                                                  'VftlVt__ha16UOfY6uHy3SE_EaDxoMCB9cnr3wTijXqTz8p4XCqRY_Q=').value),
+    ]
     check_mk_users = [
         'u\'automation\': {'
         + '\'alias\': u\'Check_MK Automation - used for calling web services\', '
@@ -1001,8 +1005,10 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                 host = {
                     'hostname': host_node.hostname,
                     'port': host_node_check_mk_config.get('port', 6556),
-                    'tags': host_node_check_mk_config.get('tags', {}),
-                    'attributes': host_node_check_mk_config.get('attributes', {}),
+
+                    # make copy since we do not want to change node
+                    'tags': host_node_check_mk_config.get('tags', {}).copy(),
+                    'attributes': host_node_check_mk_config.get('attributes', {}).copy(),
                 }
 
             if host.get('hostname', '') == '':
@@ -1019,12 +1025,14 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             tags.setdefault('criticality', 'prod')
             tags.setdefault('agent', 'cmk-agent')
             tags.setdefault('address_family', 'ip-v4-only')
+            tags.setdefault('tcp', 'tcp')
 
             if tags['agent'] in ['cmk-agent', 'snmp-tcp']:
                 tags.setdefault('tcp', 'tcp')
 
             attributes = host.get('attributes', {})
             attributes['meta_data'] = {'created_at': None, 'created_by': None}
+            # attributes['tcp'] = 'tcp'
 
             # walk throu all configured site Tags, if they are present in tags, we add them for wato
             for name, tag_config in sorted(site_tags.items(), key=sort_by_prio):
@@ -1072,6 +1080,9 @@ for site, site_config in check_mk_config.get('sites', {}).items():
 
                 management_protocol[host['hostname']] = 'ipmi'
                 attributes['management_protocol'] = 'ipmi'
+
+            if host.get('management_address', None):
+                attributes['management_address'] = host['management_address']
 
             if attributes:
                 host_attributes += [
