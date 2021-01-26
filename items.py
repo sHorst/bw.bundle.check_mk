@@ -259,7 +259,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         ],
     }
 
-    for icon in ['debian.png', 'netgear.png', 'ubnt.png', 'vmware.png', 'vmware2.png']:
+    for icon in ['debian.png', 'mikrotik.png', 'netgear.png', 'ubnt.png', 'vmware.png', 'vmware2.png']:
         files['{site_folder}/local/share/check_mk/web/htdocs/images/icons/{icon}'.format(site_folder=site_folder, icon=icon)] = {
             'source': 'icons/{icon}'.format(icon=icon),
             'owner': site,
@@ -1025,9 +1025,8 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             tags.setdefault('criticality', 'prod')
             tags.setdefault('agent', 'cmk-agent')
             tags.setdefault('address_family', 'ip-v4-only')
-            tags.setdefault('tcp', 'tcp')
 
-            if tags['agent'] in ['cmk-agent', 'snmp-tcp']:
+            if tags['agent'] in ['cmk-agent', 'snmp-tcp', 'special-agents']:
                 tags.setdefault('tcp', 'tcp')
 
             attributes = host.get('attributes', {})
