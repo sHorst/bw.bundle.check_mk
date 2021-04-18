@@ -91,10 +91,6 @@ def find_hosts_to_monitor(metadata):
                             continue
 
                         known_ids += [check_id, ]
-
-                        # remove id, if it exist
-                        check.pop('id', None)
-
                         active_checks[name] += [check, ]
 
                 # collect host_tags

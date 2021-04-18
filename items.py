@@ -1,12 +1,19 @@
-from passlib.hash import md5_crypt
+from passlib.hash import md5_crypt, sha256_crypt
 from bundlewrap.utils.dicts import merge_dict
+from pprint import pformat
+from re import match, sub
+import uuid
 
 supported_versions = {
     '1.4.0p31': 'cbbd46be8b486c12f74e4368a1d8e608864aaa105bf85c165e7604fcba7668f0',
     '1.5.0b3': '3c56922dbd7e95b451f758782b37880649d0adc0ddad43918badf555562b5e27',
     '1.6.0p9': 'ad79a72cc0cc956ee62c18858db99d4e308276823c34968807e9a34b3f13e9db',
     '1.6.0p20': '49e774966b66653d6fb64f44885efdfc1de20f450cb5e8514db0380a618ca7ab',
+    '2.0.0p2': '95b7f6894de9db8b051cf29ce5d9ee7a3591086b8bea555b4cbf4a8756114208',
 }
+
+_FOLDER_PATH_MACRO = "%#%FOLDER_PATH%#%"
+_FLOAT_MACRO = r"'%#%FLOAT\((-?\d+(?:\.\d+))\)%#%'"
 
 
 def sort_by_prio(x):
@@ -21,6 +28,17 @@ def sort_by_prio(x):
     return '{}_{}'.format(prio, x[0])
 
 
+def sort_by_tag(x):
+    sorting = ['site', 'address_family', 'ip-v4', 'agent', 'tcp', 'piggyback',
+               'snmp_ds', 'snmp', 'web', 'http', 'https', 'criticality', 'dist', 'ssh', 'networking', 'snmp-tcp', ]
+    if x[0] in sorting:
+        prio = 10 + sorting.index(x[0])
+    else:
+        prio = 99
+
+    return '{}_{}'.format(prio, x[0])
+
+
 def sort_hostnames(x):
     if isinstance(x, dict):
         return x.get('hostname', '')
@@ -30,6 +48,10 @@ def sort_hostnames(x):
 
 def sorted_dict(x):
     return dict(sorted(x.items(), key=sort_by_prio))
+
+
+def sorted_tags(x):
+    return dict(sorted(x.items(), key=sort_by_tag))
 
 
 def format_hosts(hosts):
@@ -89,7 +111,7 @@ def format_rule(rule_config):
 
         if len(rule_config) >= 4:
             output += ', {}'.format(
-                dict_to_string_python_2(rule_config[3]),
+                pformat(rule_config[3]) if (CHECK_MK_MAJOR_VERSION >= 2) else dict_to_string_python_2(rule_config[3]),
             )
 
         if len(rule_config) >= 5:
@@ -105,8 +127,29 @@ def format_rule(rule_config):
 
         return output
     elif isinstance(rule_config, dict):
-        # return rule_config
-        return dict_to_string_python_2(rule_config)
+        if CHECK_MK_MAJOR_VERSION >= 2:
+            for k0, v0 in rule_config.items():
+                # bw does not allow float in metadata, so we convert those here
+                if isinstance(v0, str) and match(r'^-?\d+(?:\.\d+)$', v0) is not None:
+                    try:
+                        rule_config[k0] = float(v0)
+                    except ValueError:
+                        pass
+
+                # bw will convert tupple to lists, so we need to convert those back
+                if isinstance(v0, dict) and k0 == 'value':
+                    if 'mode' in v0:
+                        if isinstance(v0['mode'], list):
+                            v0['mode'] = tuple(v0['mode'])
+
+                            if len(v0['mode']) > 1 and isinstance(v0['mode'][1], dict):
+                                for k1, v1 in v0['mode'][1].items():
+                                    if isinstance(v1, list):
+                                        v0['mode'][1][k1] = tuple(v1)
+
+            return sub(_FLOAT_MACRO, r'\1', pformat(rule_config).replace("'%s'" % _FOLDER_PATH_MACRO, "'/%s/' % FOLDER_PATH"))
+        else:
+            return dict_to_string_python_2(rule_config).replace("'%s'" % _FOLDER_PATH_MACRO, "'/%s/' % FOLDER_PATH")
     else:
         return rule_config
 
@@ -154,9 +197,19 @@ def generate_rules(config_rules):
     return output_rules
 
 
+def generate_id_from_name(name_of_id):
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, name_of_id))
+
+
 check_mk_config = node.metadata.get('check_mk', {})
 
 CHECK_MK_VERSION = check_mk_config.get('version', '1.6.0p9')
+CHECK_MK_MAJOR_VERSION = int(CHECK_MK_VERSION.split('.')[0])
+
+DEFAULT_FILE_MODE = '0640'
+
+if CHECK_MK_MAJOR_VERSION >= 2:
+    DEFAULT_FILE_MODE = '0660'
 
 if CHECK_MK_VERSION not in supported_versions.keys():
     # TODO: fix this error
@@ -184,7 +237,7 @@ downloads = {
 actions = {
     'install_check_mk': {
         'command': 'gdebi -n /opt/{}'.format(CHECK_MK_DEB_FILE),
-        'unless': 'omd version | grep {}'.format(CHECK_MK_VERSION),
+        'unless': 'omd versions | grep {}'.format(CHECK_MK_VERSION),
         'needs': [
             'download:/opt/{}'.format(CHECK_MK_DEB_FILE),
             'pkg_apt:gdebi-core',
@@ -276,119 +329,200 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                                                   'E5v4jZewf8by8IgbQKFACLxs2dTtSI_yaPuagSGWidJV5ycY9wldQU7dvfSgQ1UoeAXv'
                                                   'VftlVt__ha16UOfY6uHy3SE_EaDxoMCB9cnr3wTijXqTz8p4XCqRY_Q=').value),
     ]
-    check_mk_users = [
-        'u\'automation\': {'
-        + '\'alias\': u\'Check_MK Automation - used for calling web services\', '
-        + '\'locked\': False, '
-        + '\'language\': \'en\', '
-        + '\'roles\': [\'admin\'], '
-        + '\'automation_secret\': \''
-        + repo.vault.password_for('check_mk_automation_secret_{}_{}'.format(node.name, site)).value
-        + '\'},',
-    ]
 
-    contacts = [
-        "u'automation': {"
-        "'alias': u'Check_MK Automation - used for calling web services', "
-        "'notifications_enabled': False, "
-        "'pager': '', "
-        "'email': u'stefan@ultrachaos.de', "  # TODO: can be removed
-        "'contactgroups': []},",
-    ]
+    if CHECK_MK_MAJOR_VERSION >= 2:
+        check_mk_users = {
+            'automation': {
+                'alias': 'Check_MK Automation - used for calling web services',
+                'locked': False,
+                'language': 'en',
+                'roles': ['admin'],
+                'automation_secret': repo.vault.password_for('check_mk_automation_secret_{}_{}'.format(
+                    node.name, site)
+                ).value,
+                'show_mode': 'default_show_more',
+            },
+        }
+
+        contacts = {
+            'automation': {
+                'alias': u'Check_MK Automation - used for calling web services',
+                'notifications_enabled': False,
+                'pager': '',
+                'email': u'stefan@ultrachaos.de',  # TODO: can be removed
+                'contactgroups': [],
+                'user_scheme_serial': 0,
+            },
+        }
+    else:
+        check_mk_users = [
+            'u\'automation\': {'
+            + '\'alias\': u\'Check_MK Automation - used for calling web services\', '
+            + '\'locked\': False, '
+            + '\'language\': \'en\', '
+            + '\'roles\': [\'admin\'], '
+            + '\'automation_secret\': \''
+            + repo.vault.password_for('check_mk_automation_secret_{}_{}'.format(node.name, site)).value
+            + '\'},',
+            ]
+
+        contacts = [
+            "u'automation': {"
+            "'alias': u'Check_MK Automation - used for calling web services', "
+            "'notifications_enabled': False, "
+            "'pager': '', "
+            "'email': u'stefan@ultrachaos.de', "  # TODO: can be removed
+            "'contactgroups': []},",
+        ]
 
     for admin in site_config.get('admins', []):
         admin_config = check_mk_config.get('users', {}).get(admin, {})
         if not admin_config.get('enabled', False):
             continue
 
-        check_mk_users += [
-            # 'force_authuser_webservice': False, 'locked': False, 'roles': ['admin'], 'force_authuser': False, 'ui_theme': None, 'alias': u'Stefan Horst', 'start_url': None
-            f'u\'{admin}\': {{'
-            + '\'force_authuser_webservice\': False, '
-            + '\'locked\': False, '
-            + '\'roles\': [\'admin\'], '
-            + '\'force_authuser\': False, '
-            + '\'ui_theme\': None, '
-            + '\'alias\': u\'{alias}\', '.format(alias=admin_config.get('alias', admin))
-            + '\'start_url\': None'
-            + '}, '
-        ]
+        if CHECK_MK_MAJOR_VERSION >= 2:
+            check_mk_users[admin] = {
+                # 'force_authuser_webservice': False,
+                'alias': admin_config.get('alias', admin),
+                'locked': False,
+                'roles': ['admin'],
+                'force_authuser': False,
+                # 'ui_theme': None,
+                # 'start_url': None,
+                'show_mode': 'default_show_more',
+            }
 
-        contacts += [
-            "u'{user}': {{".format(
-                user=admin,
-            ),
-            "  'alias': u'{alias}',".format(
-                alias=admin_config.get('alias', admin),
-            ),
-            "  'disable_notifications': {},",  # .format(admin_config.get('disable_notifications', False)),
-            "  'email': u'{email}',".format(
-                email=admin_config.get('email', ''),
-            ),
-        ]
+            contacts[admin] = {
+                'alias': admin_config.get('alias', admin),
+                'disable_notifications': {},
+                'email': admin_config.get('email', ''),
+            }
+            if 'contactgroups' in admin_config:
+                contacts[admin]['contactgroups'] = admin_config['contactgroups']
 
-        if 'contactgroups' in admin_config:
-            contacts += [
-                "  'contactgroups': {},".format(admin_config['contactgroups'])
+            if 'pager' in admin_config:
+                contacts[admin]['pager'] = admin_config['pager']
+
+            contacts[admin]['notification_rules'] = []
+            for notification_rule, notification_rule_config in \
+                    sorted(admin_config.get('notification_rules', {}).items(), key=sort_by_prio):
+
+                if notification_rule_config.get('type', '') == 'pushover':
+                    contacts[admin]['notification_rules'] += [
+                        {
+                            'comment': notification_rule,
+                            'contact_users': [admin],
+                            'description': notification_rule_config.get('description', notification_rule),
+                            'disabled': False,
+                            'docu_url': '',
+                            'match_host_event': notification_rule_config.get('match_host_event', []),
+                            'match_service_event': notification_rule_config.get('match_service_event', []),
+                            'notify_plugin': ('pushover', {
+                                'api_key': notification_rule_config.get('api_key', ''),
+                                'recipient_key': notification_rule_config.get('recipient_key', ''),
+                                'url_prefix': f'{site_url}check_mk/'
+                            },
+                                              ),
+                        },
+                    ]
+
+            if admin_config.get('fallback_contact', False):
+                contacts[admin]['fallback_contact'] = admin_config.get('fallback_contact', False)
+
+            contacts[admin]['force_authuser_webservice'] = False
+            contacts[admin]['user_scheme_serial'] = 0
+        else:
+            check_mk_users += [
+                # 'force_authuser_webservice': False, 'locked': False, 'roles': ['admin'], 'force_authuser': False, 'ui_theme': None, 'alias': u'Stefan Horst', 'start_url': None
+                f'u\'{admin}\': {{'
+                + '\'force_authuser_webservice\': False, '
+                + '\'locked\': False, '
+                + '\'roles\': [\'admin\'], '
+                + '\'force_authuser\': False, '
+                + '\'ui_theme\': None, '
+                + '\'alias\': u\'{alias}\', '.format(alias=admin_config.get('alias', admin))
+                + '\'start_url\': None'
+                + '}, '
             ]
 
-        if 'pager' in admin_config:
             contacts += [
-                "  'pager': '{}',".format(admin_config['pager'])
+                "u'{user}': {{".format(
+                    user=admin,
+                ),
+                "  'alias': u'{alias}',".format(
+                    alias=admin_config.get('alias', admin),
+                ),
+                "  'disable_notifications': {},",  # .format(admin_config.get('disable_notifications', False)),
+                "  'email': u'{email}',".format(
+                    email=admin_config.get('email', ''),
+                ),
             ]
 
-        contacts += [
-            "  'notification_rules': [",
-        ]
-        for notification_rule, notification_rule_config in \
-                sorted(admin_config.get('notification_rules', {}).items(), key=sort_by_prio):
-
-            if notification_rule_config.get('type', '') == 'pushover':
+            if 'contactgroups' in admin_config:
                 contacts += [
-                    "    {",
-                    f"      'comment': u'{notification_rule}',",
-                    f"      'contact_users': [u'{admin}'],",
-                    "      'description': u'{}',".format(notification_rule_config.get('description', notification_rule)),
-                    "      'disabled': False,",
-                    "      'docu_url': '',",
-                    "      'match_host_event': {},".format(notification_rule_config.get('match_host_event', [])),
-                    "      'match_service_event': {},".format(notification_rule_config.get('match_service_event', [])),
-                    "      'notify_plugin': ("
-                    "        'pushover',",
-                    "        {",
-                    "          'api_key': '{}',".format(notification_rule_config.get('api_key', '')),
-                    "          'recipient_key': '{}',".format(notification_rule_config.get('recipient_key', '')),
-                    f"          'url_prefix': '{site_url}check_mk/'",
-                    "        },",
-                    "      ),",
-                    "    },",
+                    "  'contactgroups': {},".format(admin_config['contactgroups'])
                 ]
 
-        contacts += [
-            "  ],",
-        ]
+            if 'pager' in admin_config:
+                contacts += [
+                    "  'pager': '{}',".format(admin_config['pager'])
+                ]
 
-        if admin_config.get('fallback_contact', False):
             contacts += [
-                "  'fallback_contact': {},".format(admin_config.get('fallback_contact', False)),
+                "  'notification_rules': [",
+            ]
+            for notification_rule, notification_rule_config in \
+                    sorted(admin_config.get('notification_rules', {}).items(), key=sort_by_prio):
+
+                if notification_rule_config.get('type', '') == 'pushover':
+                    contacts += [
+                        "    {",
+                        f"      'comment': u'{notification_rule}',",
+                        f"      'contact_users': [u'{admin}'],",
+                        "      'description': u'{}',".format(notification_rule_config.get('description', notification_rule)),
+                        "      'disabled': False,",
+                        "      'docu_url': '',",
+                        "      'match_host_event': {},".format(notification_rule_config.get('match_host_event', [])),
+                        "      'match_service_event': {},".format(notification_rule_config.get('match_service_event', [])),
+                        "      'notify_plugin': ("
+                        "        'pushover',",
+                        "        {",
+                        "          'api_key': '{}',".format(notification_rule_config.get('api_key', '')),
+                        "          'recipient_key': '{}',".format(notification_rule_config.get('recipient_key', '')),
+                        f"          'url_prefix': '{site_url}check_mk/'",
+                        "        },",
+                        "      ),",
+                        "    },",
+                    ]
+
+            contacts += [
+                "  ],",
             ]
 
-        contacts += [
-            '},',
-        ]
+            if admin_config.get('fallback_contact', False):
+                contacts += [
+                    "  'fallback_contact': {},".format(admin_config.get('fallback_contact', False)),
+                ]
+
+            contacts += [
+                '},',
+            ]
 
         salt = repo.vault.password_for(
-            'check_mk_node_{}_site_{}_user_{}_salt'.format(node.name, site, admin),
-            length=8,
+            'check_mk_node_{}_site_{}_admin_{}_salt'.format(node.name, site, admin),
+            length=16 if CHECK_MK_MAJOR_VERSION >= 2 else 8,
         ).value
 
         passwd = admin_config.get(
             'password',
-            repo.vault.password_for('check_mk_node_{}_site_{}_user_{}_password').format(node.name, site, admin)
+            repo.vault.password_for('check_mk_node_{}_site_{}_admin_{}_password').format(node.name, site, admin)
         )
 
-        # NEEDS to be md5, since check_mk only knows how to deal with those
-        hashed_password = md5_crypt.using(salt=salt).hash(passwd)
+        if CHECK_MK_MAJOR_VERSION >= 2:
+            hashed_password = sha256_crypt.using(salt=salt, rounds=535000).hash(passwd)
+        else:
+            # NEEDS to be md5, since check_mk only knows how to deal with those
+            hashed_password = md5_crypt.using(salt=salt).hash(passwd)
 
         htpasswd += ['{}:{}'.format(admin, hashed_password)]
 
@@ -397,19 +531,31 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         if not user_config.get('enabled', False):
             continue
 
-        check_mk_users += [
-            'u\'{user}\': {{\'alias\': u\'{user}\', \'locked\': False, \'roles\': [\'user\']}}, '.format(user=user),
-        ]
-        contacts += [
-            "u'{user}': {{'alias': u'{user}', 'email': u'{email}'}},".format(
-                user=user,
-                email=user_config.get('email', ''),
-            )
-        ]
+        if CHECK_MK_MAJOR_VERSION >= 2:
+            check_mk_users[user] = {
+                'alias': user,
+                'locked': False,
+                'roles': ['user'],
+            }
+            contacts[user] = {
+                'alias': user,
+                'email': user_config.get('email', ''),
+            }
+        else:
+            check_mk_users += [
+                    'u\'{user}\': {{\'alias\': u\'{user}\','
+                    ' \'locked\': False, \'roles\': [\'user\']}}, '.format(user=user),
+                ]
+            contacts += [
+                "u'{user}': {{'alias': u'{user}', 'email': u'{email}'}},".format(
+                    user=user,
+                    email=user_config.get('email', ''),
+                )
+            ]
 
         salt = repo.vault.password_for(
             'check_mk_node_{}_site_{}_user_{}_salt'.format(node.name, site, user),
-            length=8,
+            length=16 if CHECK_MK_MAJOR_VERSION >= 2 else 8,
         )
 
         passwd = user_config.get(
@@ -417,8 +563,11 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             repo.vault.password_for('check_mk_node_{}_site_{}_user_{}_password').format(node.name, site, user)
         )
 
-        # NEEDS to be md5, since check_mk only knows how to deal with those
-        hashed_password = md5_crypt.using(salt=salt).hash(passwd)
+        if CHECK_MK_MAJOR_VERSION >= 2:
+            hashed_password = sha256_crypt.using(salt=salt, rounds=535000).hash(passwd)
+        else:
+            # NEEDS to be md5, since check_mk only knows how to deal with those
+            hashed_password = md5_crypt.using(salt=salt).hash(passwd)
 
         htpasswd += ['{}:{}'.format(user, hashed_password)]
 
@@ -426,7 +575,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         'content': '\n'.join(htpasswd) + '\n',
         'owner': site,
         'group': site,
-        'mode': '0640',
+        'mode': DEFAULT_FILE_MODE,
         'needs': [
             'action:check_mk_create_{}_site'.format(site)
         ],
@@ -465,7 +614,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         'content': admin_email + '\n',
         'owner': site,
         'group': site,
-        'mode': '0660',
+        'mode': DEFAULT_FILE_MODE,
         'needs': [
             'action:check_mk_create_{}_site'.format(site)
         ],
@@ -474,18 +623,17 @@ for site, site_config in check_mk_config.get('sites', {}).items():
     files['{}/etc/check_mk/main.mk'.format(site_folder)] = {
         'content': '\n'.join([
             '# Written by Bundlewrap',
-            '# encoding: utf-8',
             '',
-            'filesystem_default_levels["levels"] = ( 95.0, 99.0 )',
+            # 'filesystem_default_levels["levels"] = ( 95.0, 99.0 )',
             # "ntp_default_levels = (15, 500.0, 1000.0)",
-            "if_inventory_portstates = ['1', '2', '5']",
+            # "if_inventory_portstates = ['1', '2', '5']",
             ] +
             site_config.get('extra_nagios_config', []) +
             [
         ]) + '\n',
         'owner': site,
         'group': site,
-        'mode': '0660',
+        'mode': DEFAULT_FILE_MODE,
         'needs': [
             'action:check_mk_create_{}_site'.format(site)
         ],
@@ -495,222 +643,426 @@ for site, site_config in check_mk_config.get('sites', {}).items():
     }
 
     # multisite.d
-    multisites = [
-        "  '{}': {{".format(site),
-        "    'status_host': None,",
-        "    'user_sync': 'all',",
-        "    'replication': None,",
-        "    'user_login': True,",
-        "    'insecure': False,",
-        "    'disable_wato': True,",
-        "    'disabled': False,",
-        "    'alias': u'Local site {}',".format(site),
-        "    'replicate_mkps': False,",
-        "    'socket': ('local', None),",
-        "    'timeout': 10,",
-        "    'persist': False,",
-        "    'replicate_ec': False,",
-        "    'multisiteurl': '',",
-        "  },",
-    ]
+    if CHECK_MK_MAJOR_VERSION >= 2:
+        multisites = {
+            site: {
+                'status_host': None,
+                'user_sync': 'all',
+                'replication': None,
+                'user_login': True,
+                'insecure': False,
+                'disable_wato': True,
+                'disabled': False,
+                'alias': f'Local site {site}',
+                'replicate_mkps': False,
+                'socket': ('local', None),
+                'timeout': 10,
+                'persist': False,
+                'replicate_ec': False,
+                'multisiteurl': '',
+                'url_prefix': f'/{site}/',
+                'proxy': None,
+            },
+        }
 
-    for server in site_config.get('livestatus_server'):
-        multisites += [
-            "  '{}_on_{}': {{".format(server.get('site', ''), server.get('name', '').replace('.', '_')),
+        for server in site_config.get('livestatus_server'):
+            multisites['{}_on_{}'.format(server.get('site', ''), server.get('name', '').replace('.', '_'))] = {
+                'status_host': None,
+                'user_sync': 'all',
+                'user_login': True,
+                'insecure': False,
+                'disabled': False,
+                'replication': None,
+                'multisiteurl': '',
+                'replicate_mkps': True,
+                'url_prefix': 'https://{}/{}/'.format(server.get('hostname', ''), server.get('site', '')),
+                'socket': ('tcp', {'tls': ('encrypted', {'verify': False}),
+                                   'address': (server.get('ips', [])[0], server.get('port', 6557))}),
+                'disable_wato': True,
+                'alias': '{} on {}'.format(server.get('site', ''), server.get('name', '')),
+                'timeout': 10,
+                'persist': True,
+                'replicate_ec': True,
+                'proxy': None,
+            }
+
+        files['{}/etc/check_mk/multisite.d/sites.mk'.format(site_folder)] = {
+            'content': '\n'.join([
+                '# Written by Bundlewrap',
+                '',
+                'sites.update({sites})'.format(sites=str(multisites)),
+            ]) + '\n',
+            'owner': site,
+            'group': site,
+            'mode': DEFAULT_FILE_MODE,
+            'needs': [
+                'action:check_mk_create_{}_site'.format(site)
+            ],
+            'triggers': [
+                'action:check_mk_recompile_{}_site'.format(site),
+            ],
+        }
+
+        files['{}/etc/check_mk/multisite.d/wato/global.mk'.format(site_folder)] = {
+            'content': '\n'.join([
+                '# Written by Bundlewrap',
+                '',
+                'wato_use_git = True',
+                "mkeventd_notify_contactgroup = 'all'",
+            ]) + '\n',
+            'owner': site,
+            'group': site,
+            'mode': DEFAULT_FILE_MODE,
+            'needs': [
+                'action:check_mk_create_{}_site'.format(site)
+            ],
+            'triggers': [
+                'action:check_mk_recompile_{}_site'.format(site),
+            ],
+        }
+
+    else:
+        multisites = [
+            "  '{}': {{".format(site),
             "    'status_host': None,",
             "    'user_sync': 'all',",
+            "    'replication': None,",
             "    'user_login': True,",
             "    'insecure': False,",
-            "    'disabled': False,",
-            "    'replication': None,",
-            "    'multisiteurl': '',",
-            "    'replicate_mkps': True,",
-            "    'url_prefix': 'https://{}/{}/',".format(server.get('hostname', ''), server.get('site', '')),
-            "    'socket': {},".format(('tcp', {'tls': ('encrypted', {'verify': False}), 'address': (server.get('ips', [])[0], server.get('port', 6557))})),
             "    'disable_wato': True,",
-            "    'alias': u'{} on {}',".format(server.get('site', ''), server.get('name', '')),
+            "    'disabled': False,",
+            "    'alias': u'Local site {}',".format(site),
+            "    'replicate_mkps': False,",
+            "    'socket': ('local', None),",
             "    'timeout': 10,",
-            "    'persist': True,",
-            "    'replicate_ec': True,",
+            "    'persist': False,",
+            "    'replicate_ec': False,",
+            "    'multisiteurl': '',",
             "  },",
         ]
 
-    files['{}/etc/check_mk/multisite.d/sites.mk'.format(site_folder)] = {
-        'content': '\n'.join([
-            '# Written by Bundlewrap',
-            '# encoding: utf-8',
-            '',
-            'sites.update({',
-            ] + multisites + [
-            '})',
-        ]) + '\n',
-        'owner': site,
-        'group': site,
-        'mode': '0640',
-        'needs': [
-            'action:check_mk_create_{}_site'.format(site)
-        ],
-        'triggers': [
-            'action:check_mk_recompile_{}_site'.format(site),
-        ],
-    }
-    files['{}/etc/check_mk/multisite.d/wato/global.mk'.format(site_folder)] = {
-        'content': '\n'.join([
-            '# Written by Bundlewrap',
-            '# encoding: utf-8',
-            '',
-            'wato_use_git = True',
-            "mkeventd_notify_contactgroup = 'all'",
-        ]) + '\n',
-        'owner': site,
-        'group': site,
-        'mode': '0640',
-        'needs': [
-            'action:check_mk_create_{}_site'.format(site)
-        ],
-        'triggers': [
-            'action:check_mk_recompile_{}_site'.format(site),
-        ],
-    }
-
-    wato_host_tags = []
-    for host_tag, host_tag_config in sorted(site_tags.items(), key=sort_by_prio):
-        # ignore this tag in the config
-        if host_tag_config.get('notInTagConfig', False):
-            continue
-
-        # we need to do this limbo, since check_mk is still 2.7 and we need the u flag on the string
-        tmp_host_tag = []
-
-        if host_tag_config.get('topic', None):
-            tmp_host_tag += [
-                "'topic': u'{topic}'".format(
-                    topic=host_tag_config['topic']
-                ),
+        for server in site_config.get('livestatus_server'):
+            multisites += [
+                "  '{}_on_{}': {{".format(server.get('site', ''), server.get('name', '').replace('.', '_')),
+                "    'status_host': None,",
+                "    'user_sync': 'all',",
+                "    'user_login': True,",
+                "    'insecure': False,",
+                "    'disabled': False,",
+                "    'replication': None,",
+                "    'multisiteurl': '',",
+                "    'replicate_mkps': True,",
+                "    'url_prefix': 'https://{}/{}/',".format(server.get('hostname', ''), server.get('site', '')),
+                "    'socket': {},".format(('tcp', {'tls': ('encrypted', {'verify': False}),
+                                                    'address': (server.get('ips', [])[0], server.get('port', 6557))})),
+                "    'disable_wato': True,",
+                "    'alias': u'{} on {}',".format(server.get('site', ''), server.get('name', '')),
+                "    'timeout': 10,",
+                "    'persist': True,",
+                "    'replicate_ec': True,",
+                "  },",
             ]
 
-        tmp_tags = []
-        for subtag_name, subtag_config in host_tag_config.get('subtags', {}).items():
-            tmp_tags += ['{' + "'aux_tags': [{tags}], 'id': '{id}', 'title': u'{title}'".format(
+        files['{}/etc/check_mk/multisite.d/sites.mk'.format(site_folder)] = {
+            'content': '\n'.join([
+                '# Written by Bundlewrap',
+                '# encoding: utf-8',
+                '',
+                'sites.update({',
+                ] + multisites + [
+                '})',
+            ]) + '\n',
+            'owner': site,
+            'group': site,
+            'mode': DEFAULT_FILE_MODE,
+            'needs': [
+                'action:check_mk_create_{}_site'.format(site)
+            ],
+            'triggers': [
+                'action:check_mk_recompile_{}_site'.format(site),
+            ],
+        }
+        files['{}/etc/check_mk/multisite.d/wato/global.mk'.format(site_folder)] = {
+            'content': '\n'.join([
+                '# Written by Bundlewrap',
+                '# encoding: utf-8',
+                '',
+                'wato_use_git = True',
+                "mkeventd_notify_contactgroup = 'all'",
+            ]) + '\n',
+            'owner': site,
+            'group': site,
+            'mode': DEFAULT_FILE_MODE,
+            'needs': [
+                'action:check_mk_create_{}_site'.format(site)
+            ],
+            'triggers': [
+                'action:check_mk_recompile_{}_site'.format(site),
+            ],
+        }
+
+    # {
+    #   'id': 'FTP',
+    #   'title': 'ProFTP Server',
+    #   'tags': [
+    #       {'id': None, 'title': 'Nein', 'aux_tags': []},
+    #       {'id': 'ftp_21', 'title': 'Ja', 'aux_tags': ['ftp']},
+    #       {'id': 'ftp_12121', 'title': 'Ja (port 12121)', 'aux_tags': ['ftp']}
+    #   ],
+    #   'topic': 'Services'
+    # },
+
+    if CHECK_MK_MAJOR_VERSION >= 2:
+        wato_host_tags = []
+        for host_tag, host_tag_config in sorted(site_tags.items(), key=sort_by_prio):
+            # ignore this tag in the config
+            if host_tag_config.get('notInTagConfig', False):
+                continue
+
+            # we need to do this limbo, since check_mk is still 2.7 and we need the u flag on the string
+            tmp_host_tag = {
+                'id': host_tag,
+                'title': host_tag_config.get('title', ''),
+                'tags': [],
+            }
+
+            if host_tag_config.get('topic', None):
+                tmp_host_tag['topic'] = host_tag_config['topic']
+
+            tmp_tags = []
+            for subtag_name, subtag_config in host_tag_config.get('subtags', {}).items():
+                tmp_host_tag['tags'] += [{
+                    'id': None if subtag_name == "None" else subtag_name,
+                    'title': subtag_config[0],
+                    'aux_tags': subtag_config[1],
+
+                }, ]
+                # tmp_tags += [{' + "'aux_tags': [{tags}], 'id': '{id}', 'title': u'{title}'".format(
+                #     id=subtag_name,
+                #     title=subtag_config[0],
+                #     tags=', '.join(map(lambda x: "'{}'".format(x), subtag_config[1]))
+                # ).replace("'None'", "None") + '}',
+                #              ]
+
+            wato_host_tags += [tmp_host_tag, ]
+
+        wato_aux_tags = []
+        for aux_tag, aux_tag_config in sorted(
+                merge_dict(check_mk_config.get('aux_tags', {}), site_config.get('aux_tags', {})).items(),
+                key=sort_by_prio):
+            wato_aux_tags += [{
+                'id': aux_tag,
+                'title': aux_tag_config.get('title', ''),
+                'topic': aux_tag_config.get('topic', 'Services'),
+            }]
+
+        wato_tags_update = {
+            'tag_groups': wato_host_tags,
+            'aux_tags': wato_aux_tags,
+        }
+
+        files['{}/etc/check_mk/multisite.d/wato/tags.mk'.format(site_folder)] = {
+            'content': '\n'.join([
+                '# Written by Bundlewrap',
+                '',
+                'wato_tags.update({wato_tags})'.format(wato_tags=str(wato_tags_update)),
+            ]) + '\n',
+            'owner': site,
+            'group': site,
+            'mode': DEFAULT_FILE_MODE,
+            'needs': [
+                'action:check_mk_create_{}_site'.format(site)
+            ],
+            'triggers': [
+                'action:check_mk_recompile_{}_site'.format(site),
+            ],
+        }
+
+        files['{}/etc/check_mk/multisite.d/wato/users.mk'.format(site_folder)] = {
+            'content': '\n'.join([
+                '# Written by Bundlewrap',
+                '',
+                'multisite_users.update({multisite_users})'.format(multisite_users=str(check_mk_users)),
+            ]) + '\n',
+            'owner': site,
+            'group': site,
+            'mode': DEFAULT_FILE_MODE,
+            'needs': [
+                'action:check_mk_create_{}_site'.format(site)
+            ],
+            'triggers': [
+                'action:check_mk_recompile_{}_site'.format(site),
+            ],
+        }
+
+        # conf.d
+        files['{}/etc/check_mk/conf.d/wato/tags.mk'.format(site_folder)] = {
+            'content': '\n'.join([
+                '# Written by Bundlewrap',
+                '',
+                'tag_config.update({tag_config})'.format(tag_config=str(wato_tags_update)),
+            ]) + '\n',
+            'owner': site,
+            'group': site,
+            'mode': DEFAULT_FILE_MODE,
+            'needs': [
+                'action:check_mk_create_{}_site'.format(site)
+            ],
+            'triggers': [
+                'action:check_mk_recompile_{}_site'.format(site),
+            ],
+        }
+    else:
+        wato_host_tags = []
+        for host_tag, host_tag_config in sorted(site_tags.items(), key=sort_by_prio):
+            # ignore this tag in the config
+            if host_tag_config.get('notInTagConfig', False):
+                continue
+
+            # we need to do this limbo, since check_mk is still 2.7 and we need the u flag on the string
+            tmp_host_tag = []
+
+            if host_tag_config.get('topic', None):
+                tmp_host_tag += [
+                    "'topic': u'{topic}'".format(
+                        topic=host_tag_config['topic']
+                    ),
+                ]
+
+            tmp_tags = []
+            for subtag_name, subtag_config in host_tag_config.get('subtags', {}).items():
+                tmp_tags += ['{' + "'aux_tags': [{tags}], 'id': '{id}', 'title': u'{title}'".format(
                     id=subtag_name,
                     title=subtag_config[0],
                     tags=', '.join(map(lambda x: "'{}'".format(x), subtag_config[1]))
                 ).replace("'None'", "None") + '}',
-                ]
-        tmp_host_tag += ["'tags': [" + ', '.join(tmp_tags) + ']', ]
+                             ]
+            tmp_host_tag += ["'tags': [" + ', '.join(tmp_tags) + ']', ]
 
-        tmp_host_tag += ["'id': '{id}'".format(id=host_tag)]
-        tmp_host_tag += ["'title': u'{title}'".format(title=host_tag_config.get('title', ''))]
+            tmp_host_tag += ["'id': '{id}'".format(id=host_tag)]
+            tmp_host_tag += ["'title': u'{title}'".format(title=host_tag_config.get('title', ''))]
 
-        wato_host_tags += ['{' + ', '.join(tmp_host_tag) + '}', ]
-    # {
-    #     'topic': u'Services',
-    #     'tags': [
-    #         {'aux_tags': [], 'id': None, 'title': u'Nein'},
-    #         {'aux_tags': ['ftp'], 'id': 'ftp_21', 'title': u'Ja'},
-    #         {'aux_tags': ['ftp'], 'id': 'ftp_12121', 'title': u'Ja (port 12121)'}], 'id': 'FTP',
-    #     'title': u'ProFTP Server'
-    # },
+            wato_host_tags += ['{' + ', '.join(tmp_host_tag) + '}', ]
 
-    wato_aux_tags = []
-    for aux_tag, aux_tag_config in sorted(
-            merge_dict(check_mk_config.get('aux_tags', {}), site_config.get('aux_tags', {})).items(),
-            key=sort_by_prio):
+        wato_aux_tags = []
+        for aux_tag, aux_tag_config in sorted(
+                merge_dict(check_mk_config.get('aux_tags', {}), site_config.get('aux_tags', {})).items(),
+                key=sort_by_prio):
+            wato_aux_tags += [
+                # we need to do this limbo, since check_mk is still 2.7 and we need the u flag on the string
+                '{' +
+                "'topic': u'{topic}', 'id': '{name}', 'title': u'{title}'".format(
+                    topic=aux_tag_config.get('topic', 'Services'),
+                    name=aux_tag,
+                    title=aux_tag_config.get('title', ''),
+                ) + '}',
+            ]
 
-        wato_aux_tags += [
-            # we need to do this limbo, since check_mk is still 2.7 and we need the u flag on the string
-            '{' +
-            "'topic': u'{topic}', 'id': '{name}', 'title': u'{title}'".format(
-                topic=aux_tag_config.get('topic', 'Services'),
-                name=aux_tag,
-                title=aux_tag_config.get('title', ''),
-            ) + '}',
-        ]
+        wato_tags_update = '{' + "\n    'aux_tags': [\n        {aux_tags}\n    ]" \
+                                 ",\n    'tag_groups': [\n        {tag_groups}\n    ]".format(
+                                    aux_tags=",\n        ".join(wato_aux_tags),
+                                    tag_groups=",\n        ".join(wato_host_tags),
+                                 ) + '\n}'
 
-    wato_tags_update = '{' + "\n    'aux_tags': [\n        {aux_tags}\n    ]" \
-                             ",\n    'tag_groups': [\n        {tag_groups}\n    ]".format(
-                                aux_tags=",\n        ".join(wato_aux_tags),
-                                tag_groups=",\n        ".join(wato_host_tags),
-                             ) + '\n}'
+        files['{}/etc/check_mk/multisite.d/wato/tags.mk'.format(site_folder)] = {
+            'content': '\n'.join([
+                                     '# Written by Bundlewrap',
+                                     '# encoding: utf-8',
+                                     '',
+                                     'wato_tags.update({update_tags})'.format(update_tags=wato_tags_update),
+                                 ]) + '\n',
+            'owner': site,
+            'group': site,
+            'mode': DEFAULT_FILE_MODE,
+            'needs': [
+                'action:check_mk_create_{}_site'.format(site)
+            ],
+            'triggers': [
+                'action:check_mk_recompile_{}_site'.format(site),
+            ],
+        }
 
-    files['{}/etc/check_mk/multisite.d/wato/tags.mk'.format(site_folder)] = {
-        'content': '\n'.join([
-                                 '# Written by Bundlewrap',
-                                 '# encoding: utf-8',
-                                 '',
-                                 'wato_tags.update({update_tags})'.format(update_tags=wato_tags_update),
-                             ]) + '\n',
-        'owner': site,
-        'group': site,
-        'mode': '0660',
-        'needs': [
-            'action:check_mk_create_{}_site'.format(site)
-        ],
-        'triggers': [
-            'action:check_mk_recompile_{}_site'.format(site),
-        ],
-    }
+        files['{}/etc/check_mk/multisite.d/wato/users.mk'.format(site_folder)] = {
+            'content': '\n'.join([
+                                     '# Written by Bundlewrap',
+                                     '# encoding: utf-8',
+                                     '',
+                                     'multisite_users.update({',
+                                 ] +
+                                 check_mk_users +
+                                 ['})', ]
+                                 ) + '\n',
+            'owner': site,
+            'group': site,
+            'mode': DEFAULT_FILE_MODE,
+            'needs': [
+                'action:check_mk_create_{}_site'.format(site)
+            ],
+            'triggers': [
+                'action:check_mk_recompile_{}_site'.format(site),
+            ],
+        }
 
-    files['{}/etc/check_mk/multisite.d/wato/users.mk'.format(site_folder)] = {
-        'content': '\n'.join([
-                                 '# Written by Bundlewrap',
-                                 '# encoding: utf-8',
-                                 '',
-                                 'multisite_users.update({',
-                             ] +
-                             check_mk_users +
-                             ['})', ]
-                             ) + '\n',
-        'owner': site,
-        'group': site,
-        'mode': '0640',
-        'needs': [
-            'action:check_mk_create_{}_site'.format(site)
-        ],
-        'triggers': [
-            'action:check_mk_recompile_{}_site'.format(site),
-        ],
-    }
+        # conf.d
+        files['{}/etc/check_mk/conf.d/wato/tags.mk'.format(site_folder)] = {
+            'content': '\n'.join([
+                '# Written by Bundlewrap',
+                '# encoding: utf-8',
+                '',
+                'tag_config.update({update_tags})'.format(update_tags=wato_tags_update),
+            ]) + '\n',
+            'owner': site,
+            'group': site,
+            'mode': DEFAULT_FILE_MODE,
+            'needs': [
+                'action:check_mk_create_{}_site'.format(site)
+            ],
+            'triggers': [
+                'action:check_mk_recompile_{}_site'.format(site),
+            ],
+        }
+
 
     # conf.d
-    files['{}/etc/check_mk/conf.d/wato/tags.mk'.format(site_folder)] = {
-        'content': '\n'.join([
-            '# Written by Bundlewrap',
-            '# encoding: utf-8',
-            '',
-            'tag_config.update({update_tags})'.format(update_tags=wato_tags_update),
-        ]) + '\n',
-        'owner': site,
-        'group': site,
-        'mode': '0660',
-        'needs': [
-            'action:check_mk_create_{}_site'.format(site)
-        ],
-        'triggers': [
-            'action:check_mk_recompile_{}_site'.format(site),
-        ],
-    }
-
-    files['{}/etc/check_mk/conf.d/wato/contacts.mk'.format(site_folder)] = {
-        'content': '\n'.join([
-                                 '# Written by Bundlewrap',
-                                 '# encoding: utf-8',
-                                 '',
-                                 'contacts.update({',
-                             ] +
-                             contacts +
-                             ['})', ]
-                             ) + '\n',
-        'owner': site,
-        'group': site,
-        'mode': '0640',
-        'needs': [
-            'action:check_mk_create_{}_site'.format(site)
-        ],
-        'triggers': [
-            'action:check_mk_recompile_{}_site'.format(site),
-        ],
-    }
+    if CHECK_MK_MAJOR_VERSION >= 2:
+        files['{}/etc/check_mk/conf.d/wato/contacts.mk'.format(site_folder)] = {
+            'content': '\n'.join([
+                '# Written by Bundlewrap',
+                '# encoding: utf-8',
+                '',
+                'contacts.update(' + str(contacts) + ')', ]
+            ) + '\n',
+            'owner': site,
+            'group': site,
+            'mode': DEFAULT_FILE_MODE,
+            'needs': [
+                'action:check_mk_create_{}_site'.format(site)
+            ],
+            'triggers': [
+                'action:check_mk_recompile_{}_site'.format(site),
+            ],
+        }
+    else:
+        files['{}/etc/check_mk/conf.d/wato/contacts.mk'.format(site_folder)] = {
+            'content': '\n'.join([
+                                     '# Written by Bundlewrap',
+                                     '# encoding: utf-8',
+                                     '',
+                                     'contacts.update({',
+                                 ] +
+                                 contacts +
+                                 ['})', ]
+                                 ) + '\n',
+            'owner': site,
+            'group': site,
+            'mode': DEFAULT_FILE_MODE,
+            'needs': [
+                'action:check_mk_create_{}_site'.format(site)
+            ],
+            'triggers': [
+                'action:check_mk_recompile_{}_site'.format(site),
+            ],
+        }
 
     files['{}/etc/check_mk/conf.d/wato/notifications.mk'.format(site_folder)] = {
         'content': '\n'.join([
@@ -732,7 +1084,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         ]) + '\n',
         'owner': site,
         'group': site,
-        'mode': '0640',
+        'mode': DEFAULT_FILE_MODE,
         'needs': [
             'action:check_mk_create_{}_site'.format(site)
         ],
@@ -752,7 +1104,6 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             '# Written by Bundlewrap',
             '# encoding: utf-8',
             '',
-            "notification_fallback_email = '{}'".format(site_config.get('admin_email', '')),
             "use_new_descriptions_for = ['df',",
             " 'df_netapp',",
             " 'df_netapp32',",
@@ -809,12 +1160,13 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             " 'mssql_transactionlogs',",
             " 'mssql_versions']",
             "tcp_connect_timeout = 10.0",
-            "enable_rulebased_notifications = True",
             "inventory_check_interval = 120",
+            "enable_rulebased_notifications = True",
+            "notification_fallback_email = '{}'".format(site_config.get('admin_email', '')),
         ]) + '\n',
         'owner': site,
         'group': site,
-        'mode': '0640',
+        'mode': DEFAULT_FILE_MODE,
         'needs': [
             'action:check_mk_create_{}_site'.format(site)
         ],
@@ -833,15 +1185,28 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             "  '{}': u'{}',".format(host_group, host_group_config.get('description', {})),
         ]
 
-        hostgroups += [
-            "{{'condition': {condition},\n"
-            " 'options': {{'description': u'{description}'}},\n"
-            " 'value': '{name}'}}".format(
-                name=host_group,
-                condition=host_group_config.get('condition', {}),
-                description=host_group_config.get('description', {})
-            ),
-        ]
+        if CHECK_MK_MAJOR_VERSION >= 2:
+            hostgroups += [
+                "{{'condition': {condition},\n"
+                " 'id': '{id}',\n"
+                " 'options': {{'description': '{description}'}},\n"
+                " 'value': '{name}'}}".format(
+                    name=host_group,
+                    condition=host_group_config.get('condition', {}),
+                    id=host_group_config.get('id', generate_id_from_name(host_group)),
+                    description=host_group_config.get('description', {})
+                ),
+            ]
+        else:
+            hostgroups += [
+                "{{'condition': {condition},\n"
+                " 'options': {{'description': u'{description}'}},\n"
+                " 'value': '{name}'}}".format(
+                    name=host_group,
+                    condition=host_group_config.get('condition', {}),
+                    description=host_group_config.get('description', {})
+                ),
+            ]
 
     define_contactgroups = [
         "  'all': u'Everything',",
@@ -857,24 +1222,58 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             merge_dict(check_mk_config.get('contact_groups', {}), site_config.get('contact_groups', {})).items(),
             key=sort_by_prio):
 
-        define_contactgroups += [
-            "  '{}': u'{}',".format(contact_group, contact_group_config.get('description', {})),
-        ]
-        host_contactgroups += [
-            "{{'condition': {{{condition}}}, 'options': {{'description': u'{description}'}}, 'value': '{name}'}}".format(
-                name=contact_group,
-                condition=contact_group_config.get('hosts', {}).get('condition', ''),
-                description=contact_group_config.get('hosts', {}).get('description', '')
-            ),
-        ]
-        service_contactgroups += [
-            "{{'condition': {{{condition}}}, 'options': {{'description': u'{description}'}}, 'value': '{name}'}}".format(
-                name=contact_group,
-                condition=contact_group_config.get('services', {}).get('condition', ''),
-                description=contact_group_config.get('services', {}).get('description', '')
-            ),
-        ]
+        if CHECK_MK_MAJOR_VERSION >= 2:
+            # TODO: check, if this wato/groups.mk file is read
+            define_contactgroups += [
+                "  '{}': u'{}',".format(contact_group, contact_group_config.get('description', {})),
+            ]
+            host_contactgroups += [
+                "{{'condition': {{{condition}}},\n"
+                " 'id': '{id}',\n"
+                " 'options': {{'description': '{description}'}},\n"
+                " 'value': '{name}'}}".format(
+                    name=contact_group,
+                    condition=contact_group_config.get('hosts', {}).get('condition', ''),
+                    id=contact_group_config.get('hosts', {}).get('id', generate_id_from_name(f"host_{contact_group}")),
+                    description=contact_group_config.get('hosts', {}).get('description', '')
+                ),
+            ]
+            service_contactgroups += [
+                "{{'condition': {{{condition}}},\n"
+                " 'id': '{id}',\n"
+                " 'options': {{'description': '{description}'}},\n"
+                " 'value': '{name}'}}".format(
+                    name=contact_group,
+                    condition=contact_group_config.get('services', {}).get('condition', ''),
+                    id=contact_group_config.get('services', {}).get(
+                        'id', generate_id_from_name(f"service{contact_group}")),
+                    description=contact_group_config.get('services', {}).get('description', '')
+                ),
+            ]
+        else:
+            define_contactgroups += [
+                "  '{}': u'{}',".format(contact_group, contact_group_config.get('description', {})),
+            ]
+            host_contactgroups += [
+                "{{'condition': {{{condition}}},"
+                " 'options': {{'description': u'{description}'}},"
+                " 'value': '{name}'}}".format(
+                    name=contact_group,
+                    condition=contact_group_config.get('hosts', {}).get('condition', ''),
+                    description=contact_group_config.get('hosts', {}).get('description', '')
+                ),
+            ]
+            service_contactgroups += [
+                "{{'condition': {{{condition}}},"
+                " 'options': {{'description': u'{description}'}},"
+                " 'value': '{name}'}}".format(
+                    name=contact_group,
+                    condition=contact_group_config.get('services', {}).get('condition', ''),
+                    description=contact_group_config.get('services', {}).get('description', '')
+                ),
+            ]
 
+    # TODO: check, if this wato/groups.mk file is read
     files['{}/etc/check_mk/conf.d/wato/groups.mk'.format(site_folder)] = {
         'content': '\n'.join([
                                  '# Written by Bundlewrap',
@@ -898,7 +1297,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                              ]) + '\n',
         'owner': site,
         'group': site,
-        'mode': '0660',
+        'mode': DEFAULT_FILE_MODE,
         'needs': [
             'action:check_mk_create_{}_site'.format(site)
         ],
@@ -924,7 +1323,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             'content': '\n'.join(rules_content) + '\n',
             'owner': site,
             'group': site,
-            'mode': '0660',
+            'mode': DEFAULT_FILE_MODE,
             'needs': [
                 'action:check_mk_create_{}_site'.format(site)
             ],
@@ -955,7 +1354,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                 'content': '\n'.join(rules) + '\n',
                 'owner': site,
                 'group': site,
-                'mode': '0660',
+                'mode': DEFAULT_FILE_MODE,
                 'needs': [
                     'action:check_mk_create_{}_site'.format(site)
                 ],
@@ -978,7 +1377,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             ]) + '\n',
             'owner': site,
             'group': site,
-            'mode': '0660',
+            'mode': DEFAULT_FILE_MODE,
             'needs': [
                 'action:check_mk_create_{}_site'.format(site),
             ],
@@ -987,131 +1386,249 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             ],
         }
 
-        all_hosts = []
-        update_host_tags = []
-        extra_host_config_parents = []
-        host_attributes = []
-
         ipaddresses = {}
         snmp_communities = {}
         management_ipmi_credentials = {}
         management_protocol = {}
 
-        rediscover_hosts = []
-        for host in sorted(folder_config.get('hosts', []), key=sort_hostnames):
-            if isinstance(host, str):
-                host_node = repo.get_node(host)
-                host_node_check_mk_config = host_node.metadata.get('check_mk', {})
-                host = {
-                    'hostname': host_node.hostname,
-                    'port': host_node_check_mk_config.get('port', 6556),
+        if CHECK_MK_MAJOR_VERSION >= 2:
+            all_hosts = []
+            update_host_tags = {}
+            extra_host_config_parents = []
+            host_attributes = {}
 
-                    # make copy since we do not want to change node
-                    'tags': host_node_check_mk_config.get('tags', {}).copy(),
-                    'attributes': host_node_check_mk_config.get('attributes', {}).copy(),
+            rediscover_hosts = []
+            for host in sorted(folder_config.get('hosts', []), key=sort_hostnames):
+                if isinstance(host, str):
+                    host_node = repo.get_node(host)
+                    host_node_check_mk_config = host_node.metadata.get('check_mk', {})
+                    host = {
+                        'hostname': host_node.hostname,
+                        'port': host_node_check_mk_config.get('port', 6556),
+
+                        # make copy since we do not want to change node
+                        'tags': host_node_check_mk_config.get('tags', {}).copy(),
+                        'attributes': host_node_check_mk_config.get('attributes', {}).copy(),
+                    }
+
+                if host.get('hostname', '') == '':
+                    continue
+
+                tags = host.get('tags', {})
+
+                # TODO: move this to some metadata processor
+                tags.setdefault('site', site)
+                tags.setdefault('piggyback', 'auto-piggyback')
+                tags.setdefault('networking', 'lan')
+                tags.setdefault('snmp_ds', 'no-snmp')
+                tags.setdefault('ip-v4', 'ip-v4')
+                tags.setdefault('criticality', 'prod')
+                tags.setdefault('agent', 'cmk-agent')
+                tags.setdefault('address_family', 'ip-v4-only')
+
+                if tags['agent'] in ['cmk-agent', 'snmp-tcp', 'special-agents']:
+                    tags.setdefault('tcp', 'tcp')
+
+                attributes = host.get('attributes', {})
+                attributes['meta_data'] = {
+                    'created_at': 1618603607.2782695,
+                    'created_by': None,
+                    'updated_at': 1618603607.2782695
                 }
+                # attributes['tcp'] = 'tcp'
 
-            if host.get('hostname', '') == '':
-                continue
+                # walk throu all configured site Tags, if they are present in tags, we add them for wato
+                for name, tag_config in sorted(site_tags.items(), key=sort_by_prio):
+                    description = tag_config.get('description', None)
+                    subtags = tag_config.get('subtags', [])
+                    # if it is configured, do not change
+                    if 'tag_{}'.format(name) not in attributes:
+                        # TODO: make a sanity check here
+                        attributes['tag_{}'.format(name)] = tags.get(name, None)
 
-            tags = host.get('tags', {})
+                all_hosts += [host['hostname'], ]
+                update_host_tags[host['hostname']] = sorted_tags(tags)
 
-            # TODO: move this to some metadata processor
-            tags.setdefault('site', site)
-            tags.setdefault('piggyback', 'auto-piggyback')
-            tags.setdefault('networking', 'lan')
-            tags.setdefault('snmp_ds', 'no-snmp')
-            tags.setdefault('ip-v4', 'ip-v4')
-            tags.setdefault('criticality', 'prod')
-            tags.setdefault('agent', 'cmk-agent')
-            tags.setdefault('address_family', 'ip-v4-only')
+                parents = host.get('parents', [])
 
-            if tags['agent'] in ['cmk-agent', 'snmp-tcp', 'special-agents']:
-                tags.setdefault('tcp', 'tcp')
+                if parents:
+                    extra_host_config_parents += [
+                        "  ('{hostname}', {parents}),".format(
+                            hostname=host['hostname'],
+                            parents=map(lambda x: "'{}'".format(x), parents)
+                        ),
+                    ]
 
-            attributes = host.get('attributes', {})
-            attributes['meta_data'] = {'created_at': None, 'created_by': None}
-            # attributes['tcp'] = 'tcp'
+                ip = host.get('ip_address', None)
 
-            # walk throu all configured site Tags, if they are present in tags, we add them for wato
-            for name, tag_config in sorted(site_tags.items(), key=sort_by_prio):
-                description = tag_config.get('description', None)
-                subtags = tag_config.get('subtags', [])
-                # if it is configured, do not change
-                if 'tag_{}'.format(name) not in attributes:
-                    # TODO: make a sanity check here
-                    attributes['tag_{}'.format(name)] = tags.get(name, None)
+                if ip:
+                    ipaddresses[host['hostname']] = ip
+                    attributes['ipaddress'] = ip
 
-            all_hosts += ["'" + host['hostname'] + "'", ]
+                snmp_community = host.get('snmp_community', None)
 
-            update_host_tags += [
-                "'{hostname}': {host_tags}".format(
-                    hostname=host['hostname'],
-                    host_tags=sorted_dict(tags),
-                ),
+                if snmp_community:
+                    snmp_communities[host['hostname']] = snmp_community
+                    attributes['snmp_community'] = snmp_community
+
+                if host.get('management_ipmi_credentials', None):
+                    management_ipmi_credentials[host['hostname']] = host['management_ipmi_credentials']
+                    attributes['management_ipmi_credentials'] = host['management_ipmi_credentials']
+
+                    management_protocol[host['hostname']] = 'ipmi'
+                    attributes['management_protocol'] = 'ipmi'
+
+                if host.get('management_address', None):
+                    attributes['management_address'] = host['management_address']
+
+                if attributes:
+                    host_attributes[host['hostname']] = sorted_dict(attributes)
+
+                rediscover_hosts += [host['hostname'], ]
+
+                actions['check_mk_rediscover_host_{}'.format(host['hostname'])] = {
+                    'command': 'sudo -i -u {site} {folder}/bin/check_mk -II {host}'.format(
+                        site=site,
+                        folder=site_folder,
+                        host=host['hostname']
+                    ),
+                    'triggered': True,
+                }
+            hosts_content = [
+                '# Written by Bundlewrap',
+                '# encoding: utf-8',
+                '',
+                '_lock = True',
+                '',
+                "all_hosts += {}".format(str(sorted(all_hosts))),
+                '',
+                "host_tags.update({})".format(str(sorted_dict(update_host_tags))),
+                "",
+                'host_labels.update({})',
+                "",
             ]
 
-            parents = host.get('parents', [])
+        else:
+            all_hosts = []
+            update_host_tags = []
+            extra_host_config_parents = []
+            host_attributes = []
 
-            if parents:
-                extra_host_config_parents += [
-                    "  ('{hostname}', {parents}),".format(
+            rediscover_hosts = []
+            for host in sorted(folder_config.get('hosts', []), key=sort_hostnames):
+                if isinstance(host, str):
+                    host_node = repo.get_node(host)
+                    host_node_check_mk_config = host_node.metadata.get('check_mk', {})
+                    host = {
+                        'hostname': host_node.hostname,
+                        'port': host_node_check_mk_config.get('port', 6556),
+
+                        # make copy since we do not want to change node
+                        'tags': host_node_check_mk_config.get('tags', {}).copy(),
+                        'attributes': host_node_check_mk_config.get('attributes', {}).copy(),
+                    }
+
+                if host.get('hostname', '') == '':
+                    continue
+
+                tags = host.get('tags', {})
+
+                # TODO: move this to some metadata processor
+                tags.setdefault('site', site)
+                tags.setdefault('piggyback', 'auto-piggyback')
+                tags.setdefault('networking', 'lan')
+                tags.setdefault('snmp_ds', 'no-snmp')
+                tags.setdefault('ip-v4', 'ip-v4')
+                tags.setdefault('criticality', 'prod')
+                tags.setdefault('agent', 'cmk-agent')
+                tags.setdefault('address_family', 'ip-v4-only')
+
+                if tags['agent'] in ['cmk-agent', 'snmp-tcp', 'special-agents']:
+                    tags.setdefault('tcp', 'tcp')
+
+                attributes = host.get('attributes', {})
+                attributes['meta_data'] = {'created_at': None, 'created_by': None}
+                # attributes['tcp'] = 'tcp'
+
+                # walk throu all configured site Tags, if they are present in tags, we add them for wato
+                for name, tag_config in sorted(site_tags.items(), key=sort_by_prio):
+                    description = tag_config.get('description', None)
+                    subtags = tag_config.get('subtags', [])
+                    # if it is configured, do not change
+                    if 'tag_{}'.format(name) not in attributes:
+                        # TODO: make a sanity check here
+                        attributes['tag_{}'.format(name)] = tags.get(name, None)
+
+                all_hosts += [host['hostname'], ]
+
+                update_host_tags += [
+                    "'{hostname}': {host_tags}".format(
                         hostname=host['hostname'],
-                        parents=map(lambda x: "'{}'".format(x), parents)
+                        host_tags=sorted_dict(tags),
                     ),
                 ]
 
-            ip = host.get('ip_address', None)
+                parents = host.get('parents', [])
 
-            if ip:
-                ipaddresses[host['hostname']] = ip
-                attributes['ipaddress'] = ip
+                if parents:
+                    extra_host_config_parents += [
+                        "  ('{hostname}', {parents}),".format(
+                            hostname=host['hostname'],
+                            parents=map(lambda x: "'{}'".format(x), parents)
+                        ),
+                    ]
 
-            snmp_community = host.get('snmp_community', None)
+                ip = host.get('ip_address', None)
 
-            if snmp_community:
-                snmp_communities[host['hostname']] = snmp_community
-                attributes['snmp_community'] = snmp_community
+                if ip:
+                    ipaddresses[host['hostname']] = ip
+                    attributes['ipaddress'] = ip
 
-            if host.get('management_ipmi_credentials', None):
-                management_ipmi_credentials[host['hostname']] = host['management_ipmi_credentials']
-                attributes['management_ipmi_credentials'] = host['management_ipmi_credentials']
+                snmp_community = host.get('snmp_community', None)
 
-                management_protocol[host['hostname']] = 'ipmi'
-                attributes['management_protocol'] = 'ipmi'
+                if snmp_community:
+                    snmp_communities[host['hostname']] = snmp_community
+                    attributes['snmp_community'] = snmp_community
 
-            if host.get('management_address', None):
-                attributes['management_address'] = host['management_address']
+                if host.get('management_ipmi_credentials', None):
+                    management_ipmi_credentials[host['hostname']] = host['management_ipmi_credentials']
+                    attributes['management_ipmi_credentials'] = host['management_ipmi_credentials']
 
-            if attributes:
-                host_attributes += [
-                    "'{hostname}': {attributes}".format(
-                        hostname=host['hostname'],
-                        attributes=sorted_dict(attributes),
+                    management_protocol[host['hostname']] = 'ipmi'
+                    attributes['management_protocol'] = 'ipmi'
+
+                if host.get('management_address', None):
+                    attributes['management_address'] = host['management_address']
+
+                if attributes:
+                    host_attributes += [
+                        "'{hostname}': {attributes}".format(
+                            hostname=host['hostname'],
+                            attributes=sorted_dict(attributes),
+                        ),
+                    ]
+
+                rediscover_hosts += [host['hostname'], ]
+
+                actions['check_mk_rediscover_host_{}'.format(host['hostname'])] = {
+                    'command': 'sudo -i -u {site} {folder}/bin/check_mk -II {host}'.format(
+                        site=site,
+                        folder=site_folder,
+                        host=host['hostname']
                     ),
-                ]
+                    'triggered': True,
+                }
 
-            rediscover_hosts += [host['hostname'], ]
-
-            actions['check_mk_rediscover_host_{}'.format(host['hostname'])] = {
-                'command': 'sudo -i -u {site} {folder}/bin/check_mk -II {host}'.format(
-                    site=site,
-                    folder=site_folder,
-                    host=host['hostname']
-                ),
-                'triggered': True,
-            }
-
-        hosts_content = [
-            '# Written by Bundlewrap',
-            '# encoding: utf-8',
-            '',
-            "all_hosts += [" + ', '.join(sorted(all_hosts)) + ']',
-            '',
-            "host_tags.update({\n    " + ",\n    ".join(update_host_tags) + "\n})",
-            "",
-            'host_labels.update({})',
-            "",
+            hosts_content = [
+                '# Written by Bundlewrap',
+                '# encoding: utf-8',
+                '',
+                "all_hosts += {}".format(str(sorted(all_hosts))),
+                '',
+                "host_tags.update({\n    " + ",\n    ".join(update_host_tags) + "\n})",
+                "",
+                'host_labels.update({})',
+                "",
             ]
 
         if ipaddresses:
@@ -1149,18 +1666,25 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                                  "extra_host_conf.setdefault('parents', []).extend([",
                              ] + extra_host_config_parents + ["])", ]
 
-        hosts_content += [
-            "# Host attributes (needed for WATO)",
-            "host_attributes.update({",
-            "    " + ",\n    ".join(host_attributes),
-            "})",
+        if CHECK_MK_MAJOR_VERSION >= 2:
+            hosts_content += [
+                "# Host attributes (needed for WATO)",
+                "host_attributes.update(",
+                "{})".format(str(sorted_dict(host_attributes))),
             ]
+        else:
+            hosts_content += [
+                "# Host attributes (needed for WATO)",
+                "host_attributes.update({",
+                "    " + ",\n    ".join(host_attributes),
+                "})",
+                ]
 
         files['{}/etc/check_mk/conf.d/wato/{}/hosts.mk'.format(site_folder, folder)] = {
             'content': '\n'.join(hosts_content) + '\n',
             'owner': site,
             'group': site,
-            'mode': '0660',
+            'mode': DEFAULT_FILE_MODE,
             'needs': [
                 'action:check_mk_create_{}_site'.format(site),
             ],
@@ -1299,7 +1823,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         ]) + '\n',
         'owner': site,
         'group': site,
-        'mode': '0640',
+        'mode': DEFAULT_FILE_MODE,
         'needs': [
             'action:check_mk_create_{}_site'.format(site)
         ],
@@ -1307,5 +1831,3 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             'action:check_mk_recompile_{}_site'.format(site),
         ],
     }
-
-    # TODO: patch sha512 support into htpasswd authentication ( ~/share/check_mk/web/plugins/userdb/htpasswd.py )
