@@ -324,10 +324,17 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             ],
         }
 
+    seed = repo.vault.password_for("check_mk_automation_htpasswd_seed_{}_{}".format(node.name, site), length=16).value
+    pw = repo.vault.password_for("check_mk_automation_htpasswd_{}_{}".format(node.name, site), length=16).value
+
+    if CHECK_MK_MAJOR_VERSION >= 2:
+        hashed_password = sha256_crypt.using(salt=seed, rounds=535000).hash(pw)
+    else:
+        # NEEDS to be md5, since check_mk only knows how to deal with those
+        hashed_password = md5_crypt.using(salt=seed).hash(pw)
+
     htpasswd = [
-        'automation:{}'.format(repo.vault.decrypt('encrypt$gAAAAABgDxodxvHVufrBj4NriSk76jJgD0p_-gllfQ1PqDLd0Pd_WsQwDKNr'
-                                                  'E5v4jZewf8by8IgbQKFACLxs2dTtSI_yaPuagSGWidJV5ycY9wldQU7dvfSgQ1UoeAXv'
-                                                  'VftlVt__ha16UOfY6uHy3SE_EaDxoMCB9cnr3wTijXqTz8p4XCqRY_Q=').value),
+        'automation:{}'.format(hashed_password),
     ]
 
     if CHECK_MK_MAJOR_VERSION >= 2:
