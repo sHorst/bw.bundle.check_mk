@@ -5,11 +5,16 @@ from re import match, sub
 import uuid
 
 supported_versions = {
-    '1.4.0p31': 'cbbd46be8b486c12f74e4368a1d8e608864aaa105bf85c165e7604fcba7668f0',
-    '1.5.0b3': '3c56922dbd7e95b451f758782b37880649d0adc0ddad43918badf555562b5e27',
-    '1.6.0p9': 'ad79a72cc0cc956ee62c18858db99d4e308276823c34968807e9a34b3f13e9db',
-    '1.6.0p20': '49e774966b66653d6fb64f44885efdfc1de20f450cb5e8514db0380a618ca7ab',
-    '2.0.0p2': '95b7f6894de9db8b051cf29ce5d9ee7a3591086b8bea555b4cbf4a8756114208',
+    'buster': {
+        '1.4.0p31': 'cbbd46be8b486c12f74e4368a1d8e608864aaa105bf85c165e7604fcba7668f0',
+        '1.5.0b3': '3c56922dbd7e95b451f758782b37880649d0adc0ddad43918badf555562b5e27',
+        '1.6.0p9': 'ad79a72cc0cc956ee62c18858db99d4e308276823c34968807e9a34b3f13e9db',
+        '1.6.0p20': '49e774966b66653d6fb64f44885efdfc1de20f450cb5e8514db0380a618ca7ab',
+        '2.0.0p2': '95b7f6894de9db8b051cf29ce5d9ee7a3591086b8bea555b4cbf4a8756114208',
+    },
+    'bullseye': {
+        '2.0.0p2': '95b7f6894de9db8b051cf29ce5d9ee7a3591086b8bea555b4cbf4a8756114208',
+    }
 }
 
 _FOLDER_PATH_MACRO = "%#%FOLDER_PATH%#%"
@@ -211,7 +216,9 @@ DEFAULT_FILE_MODE = '0640'
 if CHECK_MK_MAJOR_VERSION >= 2:
     DEFAULT_FILE_MODE = '0660'
 
-if CHECK_MK_VERSION not in supported_versions.keys():
+RELEASE_NAME = node.metadata.get(node.os, {}).get('release_name', 'jessi')
+
+if CHECK_MK_VERSION not in supported_versions.get(RELEASE_NAME, {}).keys():
     # TODO: fix this error
     raise BundleError(_(
         "unsupported version {version} for {item} in bundle '{bundle}'"
@@ -221,9 +228,8 @@ if CHECK_MK_VERSION not in supported_versions.keys():
         item=item_id,
     ))
 
-RELEASE_NAME = node.metadata.get(node.os, {}).get('release_name', 'jessi')
 CHECK_MK_DEB_FILE = f'check-mk-raw-{CHECK_MK_VERSION}_0.{RELEASE_NAME}_amd64.deb'
-CHECK_MK_DEB_FILE_SHA256 = supported_versions[CHECK_MK_VERSION]
+CHECK_MK_DEB_FILE_SHA256 = supported_versions[RELEASE_NAME][CHECK_MK_VERSION]
 
 files = {}
 directories = {}
