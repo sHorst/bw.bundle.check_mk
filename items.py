@@ -11,9 +11,11 @@ supported_versions = {
         '1.6.0p9': 'ad79a72cc0cc956ee62c18858db99d4e308276823c34968807e9a34b3f13e9db',
         '1.6.0p20': '49e774966b66653d6fb64f44885efdfc1de20f450cb5e8514db0380a618ca7ab',
         '2.0.0p2': '95b7f6894de9db8b051cf29ce5d9ee7a3591086b8bea555b4cbf4a8756114208',
+        '2.0.0p9': '9b219e8948b9970f9fdb836422787870a24aba9ee9505e8e46ac72451fcdf3d2',
     },
     'bullseye': {
         '2.0.0p2': '95b7f6894de9db8b051cf29ce5d9ee7a3591086b8bea555b4cbf4a8756114208',
+        '2.0.0p9': '95b7f6894de9db8b051cf29ce5d9ee7a3591086b8bea555b4cbf4a8756114208',
     }
 }
 
@@ -228,14 +230,14 @@ if CHECK_MK_VERSION not in supported_versions.get(RELEASE_NAME, {}).keys():
         item=item_id,
     ))
 
-CHECK_MK_DEB_FILE = f'check-mk-raw-{CHECK_MK_VERSION}_0.{RELEASE_NAME}_amd64.deb'
+CHECK_MK_DEB_FILE = f'check-mk-free-{CHECK_MK_VERSION}_0.{RELEASE_NAME}_amd64.deb'
 CHECK_MK_DEB_FILE_SHA256 = supported_versions[RELEASE_NAME][CHECK_MK_VERSION]
 
 files = {}
 directories = {}
 downloads = {
     '/opt/{}'.format(CHECK_MK_DEB_FILE): {
-        'url': 'https://mathias-kettner.de/support/{}/{}'.format(CHECK_MK_VERSION, CHECK_MK_DEB_FILE),
+        'url': 'https://download.checkmk.com/checkmk/{}/{}'.format(CHECK_MK_VERSION, CHECK_MK_DEB_FILE),
         'sha256': CHECK_MK_DEB_FILE_SHA256,
     }
 }
