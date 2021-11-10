@@ -1,5 +1,6 @@
 from passlib.hash import md5_crypt, sha256_crypt
 from bundlewrap.utils.dicts import merge_dict
+from bundlewrap.exceptions import BundleError
 from pprint import pformat
 from re import match, sub
 import uuid
@@ -14,8 +15,8 @@ supported_versions = {
         '2.0.0p9': 'e12e5ede139ee1eba9018689c477f30990f32a989306b783eae1f56d0fc5dc7b',
     },
     'bullseye': {
-        '2.0.0p2': '95b7f6894de9db8b051cf29ce5d9ee7a3591086b8bea555b4cbf4a8756114208',  # TODO: no bullseye yet
-        '2.0.0p9': 'e12e5ede139ee1eba9018689c477f30990f32a989306b783eae1f56d0fc5dc7b',  # TODO: no bullseye yet
+        # https://download.checkmk.com/checkmk/2.0.0p13/check-mk-raw-2.0.0p13_0.bullseye_amd64.deb
+        '2.0.0p13': '369bd2d59c8227acf6f501f4b19fee2d3ff4c3d2e1216c0c37826cb87a4376eb',
     }
 }
 
@@ -122,13 +123,11 @@ def format_rule(rule_config):
             )
 
         if len(rule_config) >= 5:
-            raise BundleError(_(
-                "Config Rule has to many values {item} in bundle '{bundle}'"
-            ).format(
+            raise BundleError("Config Rule has to many values {item} in bundle '{bundle}'").format(
                 file=self.node.name,
                 bundle=bundle.name,
                 item=item_id,
-            ))
+            )
 
         output += ')'
 
@@ -222,13 +221,7 @@ RELEASE_NAME = node.metadata.get(node.os, {}).get('release_name', 'jessi')
 
 if CHECK_MK_VERSION not in supported_versions.get(RELEASE_NAME, {}).keys():
     # TODO: fix this error
-    raise BundleError(_(
-        "unsupported version {version} for {item} in bundle '{bundle}'"
-    ).format(
-        version=CHECK_MK_VERSION,
-        bundle=bundle.name,
-        item=item_id,
-    ))
+    raise BundleError(f"unsupported CheckMK version {CHECK_MK_VERSION}")
 
 CHECK_MK_DEB_FILE = f'check-mk-raw-{CHECK_MK_VERSION}_0.{RELEASE_NAME}_amd64.deb'
 CHECK_MK_DEB_FILE_SHA256 = supported_versions[RELEASE_NAME][CHECK_MK_VERSION]
