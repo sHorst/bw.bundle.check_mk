@@ -1072,23 +1072,30 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             ],
         }
 
+    global_notification_rules = check_mk_config.get('notification_rules', [])
+    global_notification_rules += site_config.get('notification_rules', [])
+
+    global_notification_rules += [
+        {
+            'allow_disable': True,
+            'comment': '',
+            'contact_all': False,
+            'contact_all_with_email': False,
+            'contact_object': True,
+            #  'contact_match_groups': {contact_match_groups},".format(contact_match_groups=['all']),
+            'description': 'html',
+            'disabled': False,
+            'docu_url': '',
+            'notify_plugin': ('mail', {}),
+        },
+    ]
+
     files['{}/etc/check_mk/conf.d/wato/notifications.mk'.format(site_folder)] = {
         'content': '\n'.join([
             '# Written by Bundlewrap',
             '# encoding: utf-8',
             '',
-            "notification_rules += [{",
-            "  'allow_disable': True,",
-            "  'comment': u'',",
-            "  'contact_all': False,",
-            "  'contact_all_with_email': False,",
-            "  'contact_object': True,",
-            # "  'contact_match_groups': {contact_match_groups},".format(contact_match_groups=['all']),
-            "  'description': u'html',",
-            "  'disabled': False,",
-            "  'docu_url': '',",
-            "  'notify_plugin': (u'mail', {})",
-            "}]",
+            "notification_rules += " + str(global_notification_rules),
         ]) + '\n',
         'owner': site,
         'group': site,
