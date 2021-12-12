@@ -62,6 +62,10 @@ def sorted_tags(x):
     return dict(sorted(x.items(), key=sort_by_tag))
 
 
+def sorted_labels(x):
+    return dict(sorted(x.items(), key=sort_by_tag))
+
+
 def format_hosts(hosts):
     if isinstance(hosts, list):
         return '[' + ", ".join(map(lambda x: "'{}'".format(x), hosts)) + ']'
@@ -1409,6 +1413,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         if CHECK_MK_MAJOR_VERSION >= 2:
             all_hosts = []
             update_host_tags = {}
+            update_host_labels = {}
             extra_host_config_parents = []
             host_attributes = {}
 
@@ -1461,8 +1466,13 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                         # TODO: make a sanity check here
                         attributes['tag_{}'.format(name)] = tags.get(name, None)
 
+                labels = host.get('labels', {})
+
                 all_hosts += [host['hostname'], ]
                 update_host_tags[host['hostname']] = sorted_tags(tags)
+
+                if len(labels):
+                    update_host_labels[host['hostname']] = sorted_labels(labels)
 
                 parents = host.get('parents', [])
 
@@ -1519,7 +1529,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                 '',
                 "host_tags.update({})".format(str(sorted_dict(update_host_tags))),
                 "",
-                'host_labels.update({})',
+                'host_labels.update({})'.format(str(sorted_dict(update_host_labels))),
                 "",
             ]
 
