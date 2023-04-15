@@ -677,7 +677,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             },
         }
 
-        for server in site_config.get('livestatus_server'):
+        for server in site_config.get('livestatus_server', {}):
             multisites['{}_on_{}'.format(server.get('site', ''), server.get('name', '').replace('.', '_'))] = {
                 'status_host': None,
                 'user_sync': 'all',
