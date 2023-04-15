@@ -125,6 +125,9 @@ def find_hosts_to_monitor(metadata):
 
 @metadata_reactor
 def add_iptables_rules(metadata):
+    if not node.has_bundle("iptables"):
+        raise DoNotRunAgain
+
     interfaces = [metadata.get('main_interface'), ]
     interfaces += metadata.get('check_mk/additional_interfaces', [])
 
