@@ -1,4 +1,4 @@
-from passlib.hash import md5_crypt, sha256_crypt
+from passlib.hash import md5_crypt, sha256_crypt, bcrypt
 from bundlewrap.utils.dicts import merge_dict
 from bundlewrap.exceptions import BundleError
 from pprint import pformat
@@ -17,6 +17,14 @@ supported_versions = {
     'bullseye': {
         # https://download.checkmk.com/checkmk/2.0.0p13/check-mk-raw-2.0.0p13_0.bullseye_amd64.deb
         '2.0.0p13': '369bd2d59c8227acf6f501f4b19fee2d3ff4c3d2e1216c0c37826cb87a4376eb',
+        '2.1.0p29': '48799bb35f48ec082075ed02f85a56c8544c8f598a359e7491c00861777cfb73',
+        '2.1.0p30': '0c48b0e86bb237c2c4536f1b57689ce18954713c243626015d468d27de4cc2f8',
+        '2.2.0p4': '6a188c633a88fc702803dfe7ab1a5b84e3a4528938f7a44c7eee97fbc12b4b03',
+    },
+    'bookworm': {
+        # https://download.checkmk.com/checkmk/2.0.0p13/check-mk-raw-2.0.0p13_0.bookworm_amd64.deb
+        '2.0.0p13': '369bd2d59c8227acf6f501f4b19fee2d3ff4c3d2e1216c0c37826cb87a4376eb',
+        '2.2.0p4': '6a188c633a88fc702803dfe7ab1a5b84e3a4528938f7a44c7eee97fbc12b4b03',
     }
 }
 
@@ -215,6 +223,14 @@ check_mk_config = node.metadata.get('check_mk', {})
 
 CHECK_MK_VERSION = check_mk_config.get('version', '1.6.0p9')
 CHECK_MK_MAJOR_VERSION = int(CHECK_MK_VERSION.split('.')[0])
+CHECK_MK_MINOR_VERSION = int(CHECK_MK_VERSION.split('.')[1])
+
+SALT_LENGTH = 8
+if CHECK_MK_MAJOR_VERSION >= 2:
+    if CHECK_MK_MINOR_VERSION >= 2:
+        SALT_LENGTH = 22
+    else:
+        SALT_LENGTH = 16
 
 DEFAULT_FILE_MODE = '0640'
 
@@ -329,11 +345,15 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             ],
         }
 
-    seed = repo.vault.password_for("check_mk_automation_htpasswd_seed_{}_{}".format(node.name, site), length=16).value
+    seed = repo.vault.password_for("check_mk_automation_htpasswd_seed_{}_{}".format(node.name, site),
+                                   length=SALT_LENGTH).value
     pw = repo.vault.password_for("check_mk_automation_htpasswd_{}_{}".format(node.name, site), length=16).value
 
     if CHECK_MK_MAJOR_VERSION >= 2:
-        hashed_password = sha256_crypt.using(salt=seed, rounds=535000).hash(pw)
+        if CHECK_MK_MINOR_VERSION >= 2:
+            hashed_password = bcrypt.using(salt=seed, rounds=12).hash(pw)
+        else:
+            hashed_password = sha256_crypt.using(salt=seed, rounds=535000).hash(pw)
     else:
         # NEEDS to be md5, since check_mk only knows how to deal with those
         hashed_password = md5_crypt.using(salt=seed).hash(pw)
@@ -531,7 +551,10 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         )
 
         if CHECK_MK_MAJOR_VERSION >= 2:
-            hashed_password = sha256_crypt.using(salt=salt, rounds=535000).hash(passwd)
+            if CHECK_MK_MINOR_VERSION >= 2:
+                hashed_password = bcrypt.using(salt=seed, rounds=12).hash(passwd)
+            else:
+                hashed_password = sha256_crypt.using(salt=seed, rounds=535000).hash(passwd)
         else:
             # NEEDS to be md5, since check_mk only knows how to deal with those
             hashed_password = md5_crypt.using(salt=salt).hash(passwd)
@@ -567,7 +590,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
 
         salt = repo.vault.password_for(
             'check_mk_node_{}_site_{}_user_{}_salt'.format(node.name, site, user),
-            length=16 if CHECK_MK_MAJOR_VERSION >= 2 else 8,
+            length=SALT_LENGTH,
         )
 
         passwd = user_config.get(
@@ -576,7 +599,12 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         )
 
         if CHECK_MK_MAJOR_VERSION >= 2:
-            hashed_password = sha256_crypt.using(salt=salt, rounds=535000).hash(passwd)
+            if CHECK_MK_MINOR_VERSION >= 2:
+                seed = repo.vault. \
+                    password_for("check_mk_automation_htpasswd_seed_{}_{}".format(node.name, site), length=22).value
+                hashed_password = bcrypt.using(salt=seed, rounds=12).hash(pw)
+            else:
+                hashed_password = sha256_crypt.using(salt=salt, rounds=535000).hash(passwd)
         else:
             # NEEDS to be md5, since check_mk only knows how to deal with those
             hashed_password = md5_crypt.using(salt=salt).hash(passwd)
