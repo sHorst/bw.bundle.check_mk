@@ -409,7 +409,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                 'pager': '',
                 'email': u'stefan@ultrachaos.de',  # TODO: can be removed
                 'contactgroups': [],
-                'user_scheme_serial': 0,
+                'user_scheme_serial': 1,
             },
         }
     else:
@@ -491,7 +491,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                 contacts[admin]['fallback_contact'] = admin_config.get('fallback_contact', False)
 
             contacts[admin]['force_authuser_webservice'] = False
-            contacts[admin]['user_scheme_serial'] = 0
+            contacts[admin]['user_scheme_serial'] = 1
         else:
             check_mk_users += [
                 # 'force_authuser_webservice': False, 'locked': False, 'roles': ['admin'], 'force_authuser': False, 'ui_theme': None, 'alias': u'Stefan Horst', 'start_url': None
@@ -772,13 +772,31 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             ],
         }
 
+        global_configuration = {
+            'wato_use_git':  True,
+            'mkeventd_notify_contactgroup': 'all',
+        }
+
+        global_mk = [
+            '# Written by Bundlewrap',
+            '',
+        ]
+
+        if CHECK_MK_MINOR_VERSION >= 2:
+            global_configuration = dict(sorted(global_configuration.items()))
+
+        for k, v in global_configuration.items():
+            if isinstance(v, str):
+                global_mk += [
+                    f"{k} = '{v}'"
+                ]
+            else:
+                global_mk += [
+                    f"{k} = {v}"
+                ]
+
         files['{}/etc/check_mk/multisite.d/wato/global.mk'.format(site_folder)] = {
-            'content': '\n'.join([
-                '# Written by Bundlewrap',
-                '',
-                'wato_use_git = True',
-                "mkeventd_notify_contactgroup = 'all'",
-            ]) + '\n',
+            'content': '\n'.join(global_mk) + '\n',
             'owner': site,
             'group': site,
             'mode': DEFAULT_FILE_MODE,
@@ -1091,7 +1109,6 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             ],
         }
 
-
     # conf.d
     if CHECK_MK_MAJOR_VERSION >= 2:
         files['{}/etc/check_mk/conf.d/wato/contacts.mk'.format(site_folder)] = {
@@ -1150,14 +1167,25 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             'notify_plugin': ('mail', {}),
         },
     ]
+    if CHECK_MK_MAJOR_VERSION >= 2 and CHECK_MK_MINOR_VERSION >= 2:
+        global_notification_rules[0]['rule_id'] = 'ca159a3e-989d-4bfa-b93a-2f657f9c2884'
+
+    notifications = [
+        '# Written by Bundlewrap',
+    ]
+
+    if CHECK_MK_MAJOR_VERSION <= 2 and CHECK_MK_MINOR_VERSION < 2:
+        notifications += [
+            '# encoding: utf-8',
+        ]
+
+    notifications += [
+        '',
+        f"notification_rules += {global_notification_rules}",
+    ]
 
     files['{}/etc/check_mk/conf.d/wato/notifications.mk'.format(site_folder)] = {
-        'content': '\n'.join([
-            '# Written by Bundlewrap',
-            '# encoding: utf-8',
-            '',
-            "notification_rules += " + str(global_notification_rules),
-        ]) + '\n',
+        'content': '\n'.join(notifications) + '\n',
         'owner': site,
         'group': site,
         'mode': DEFAULT_FILE_MODE,
@@ -1175,71 +1203,167 @@ for site, site_config in check_mk_config.get('sites', {}).items():
     #  'automation': {'alias': u'Check_MK Automation - used for calling web services', 'locked': False,
     #                 'roles': ['admin'], 'language': 'en', 'automation_secret': '3OlTaam37oEo6DaHkE8RtPkGhaVntNjh'}
 
-    files['{}/etc/check_mk/conf.d/wato/global.mk'.format(site_folder)] = {
-        'content': '\n'.join([
-            '# Written by Bundlewrap',
+    global_mk = [
+        '# Written by Bundlewrap',
+    ]
+
+    global_mk_config = {
+        'use_new_descriptions_for': [],
+        'tcp_connect_timeout': 10.0,
+        'inventory_check_interval': 120,
+        'notification_fallback_email': site_config.get('admin_email', ''),
+    }
+
+    if CHECK_MK_MAJOR_VERSION >= 2 and CHECK_MK_MINOR_VERSION >= 2:
+        global_mk_config['use_new_descriptions_for'] = [
+                'df',
+                'df_netapp',
+                'df_netapp32',
+                'esx_vsphere_datastores',
+                'hr_fs',
+                'vms_diskstat_df',
+                'zfsget',
+                'ps',
+                'ps_perf',
+                'wmic_process',
+                'services',
+                'logwatch',
+                'logwatch_groups',
+                'cmk_inventory',
+                'hyperv_vms',
+                'ibm_svc_mdiskgrp',
+                'ibm_svc_system',
+                'ibm_svc_systemstats_diskio',
+                'ibm_svc_systemstats_iops',
+                'ibm_svc_systemstats_disk_latency',
+                'ibm_svc_systemstats_cache',
+                'casa_cpu_temp',
+                'cmciii_temp',
+                'cmciii_psm_current',
+                'cmciii_lcp_airin',
+                'cmciii_lcp_airout',
+                'cmciii_lcp_water',
+                'etherbox_temp',
+                'liebert_bat_temp',
+                'nvidia_temp',
+                'ups_bat_temp',
+                'innovaphone_temp',
+                'enterasys_temp',
+                'raritan_emx',
+                'raritan_pdu_inlet',
+                'mknotifyd',
+                'mknotifyd_connection',
+                'postfix_mailq',
+                'nullmailer_mailq',
+                'barracuda_mailqueues',
+                'qmail_stats',
+                'http',
+                'mssql_backup',
+                'mssql_counters_cache_hits',
+                'mssql_counters_transactions',
+                'mssql_counters_locks',
+                'mssql_counters_sqlstats',
+                'mssql_counters_pageactivity',
+                'mssql_counters_locks_per_batch',
+                'mssql_counters_file_sizes',
+                'mssql_databases',
+                'mssql_datafiles',
+                'mssql_tablespaces',
+                'mssql_transactionlogs',
+                'mssql_versions'
+            ]
+        global_mk_config['enable_rulebased_notifications'] = True
+    else:
+        global_mk += [
             '# encoding: utf-8',
-            '',
-            "use_new_descriptions_for = ['df',",
-            " 'df_netapp',",
-            " 'df_netapp32',",
-            " 'esx_vsphere_datastores',",
-            " 'hr_fs',",
-            " 'vms_diskstat.df',",
-            " 'zfsget',",
-            " 'ps',",
-            " 'ps.perf',",
-            " 'wmic_process',",
-            " 'services',",
-            " 'logwatch',",
-            " 'logwatch.groups',",
-            " 'cmk-inventory',",
-            " 'hyperv_vms',",
-            " 'ibm_svc_mdiskgrp',",
-            " 'ibm_svc_system',",
-            " 'ibm_svc_systemstats.diskio',",
-            " 'ibm_svc_systemstats.iops',",
-            " 'ibm_svc_systemstats.disk_latency',",
-            " 'ibm_svc_systemstats.cache',",
-            " 'casa_cpu_temp',",
-            " 'cmciii.temp',",
-            " 'cmciii.psm_current',",
-            " 'cmciii_lcp_airin',",
-            " 'cmciii_lcp_airout',",
-            " 'cmciii_lcp_water',",
-            " 'etherbox.temp',",
-            " 'liebert_bat_temp',",
-            " 'nvidia.temp',",
-            " 'ups_bat_temp',",
-            " 'innovaphone_temp',",
-            " 'enterasys_temp',",
-            " 'raritan_emx',",
-            " 'raritan_pdu_inlet',",
-            " 'mknotifyd',",
-            " 'mknotifyd.connection',",
-            " 'postfix_mailq',",
-            " 'nullmailer_mailq',",
-            " 'barracuda_mailqueues',",
-            " 'qmail_stats',",
-            " 'http',",
-            " 'mssql_backup',",
-            " 'mssql_counters.cache_hits',",
-            " 'mssql_counters.transactions',",
-            " 'mssql_counters.locks',",
-            " 'mssql_counters.sqlstats',",
-            " 'mssql_counters.pageactivity',",
-            " 'mssql_counters.locks_per_batch',",
-            " 'mssql_counters.file_sizes',",
-            " 'mssql_databases',",
-            " 'mssql_datafiles',",
-            " 'mssql_tablespaces',",
-            " 'mssql_transactionlogs',",
-            " 'mssql_versions']",
-            "tcp_connect_timeout = 10.0",
-            "inventory_check_interval = 120",
-            "enable_rulebased_notifications = True",
-            "notification_fallback_email = '{}'".format(site_config.get('admin_email', '')),
-        ]) + '\n',
+        ]
+
+        global_mk_config['use_new_descriptions_for'] = [
+            'df',
+            'df_netapp',
+            'df_netapp32',
+            'esx_vsphere_datastores',
+            'hr_fs',
+            'vms_diskstat.df',
+            'zfsget',
+            'ps',
+            'ps.perf',
+            'wmic_process',
+            'services',
+            'logwatch',
+            'logwatch.groups',
+            'cmk-inventory',
+            'hyperv_vms',
+            'ibm_svc_mdiskgrp',
+            'ibm_svc_system',
+            'ibm_svc_systemstats.diskio',
+            'ibm_svc_systemstats.iops',
+            'ibm_svc_systemstats.disk_latency',
+            'ibm_svc_systemstats.cache',
+            'casa_cpu_temp',
+            'cmciii.temp',
+            'cmciii.psm_current',
+            'cmciii_lcp_airin',
+            'cmciii_lcp_airout',
+            'cmciii_lcp_water',
+            'etherbox.temp',
+            'liebert_bat_temp',
+            'nvidia.temp',
+            'ups_bat_temp',
+            'innovaphone_temp',
+            'enterasys_temp',
+            'raritan_emx',
+            'raritan_pdu_inlet',
+            'mknotifyd',
+            'mknotifyd.connection',
+            'postfix_mailq',
+            'nullmailer_mailq',
+            'barracuda_mailqueues',
+            'qmail_stats',
+            'http',
+            'mssql_backup',
+            'mssql_counters.cache_hits',
+            'mssql_counters.transactions',
+            'mssql_counters.locks',
+            'mssql_counters.sqlstats',
+            'mssql_counters.pageactivity',
+            'mssql_counters.locks_per_batch',
+            'mssql_counters.file_sizes',
+            'mssql_databases',
+            'mssql_datafiles',
+            'mssql_tablespaces',
+            'mssql_transactionlogs',
+            'mssql_versions'
+        ]
+
+    global_mk += [
+        '',
+    ]
+
+    for k, v in global_mk_config.items():
+        if isinstance(v, list):
+            use_new_descriptions_for = []
+            for l in v:
+                use_new_descriptions_for += [
+                    f" '{l}',"
+                ]
+
+            use_new_descriptions_for[0] = f'{k} = [' + use_new_descriptions_for[0][1:]
+            use_new_descriptions_for[-1] = use_new_descriptions_for[-1][0:-1] + ']'
+
+            global_mk += use_new_descriptions_for
+
+        elif isinstance(v, str):
+            global_mk += [
+                f"{k} = '{v}'"
+            ]
+        else:
+            global_mk += [
+                f'{k} = {v}'
+            ]
+
+    files['{}/etc/check_mk/conf.d/wato/global.mk'.format(site_folder)] = {
+        'content': '\n'.join(global_mk) + '\n',
         'owner': site,
         'group': site,
         'mode': DEFAULT_FILE_MODE,
@@ -1881,7 +2005,10 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                  'invert_matching': False,
                  'disabled': False,
                  'state': 2,
-                 'sl': 0,
+                 'sl': {
+                     'value': 0,
+                     'precedence': 'message'
+                 },
                  'docu_url': '',
                  'id': 'auth_fail',
                  'match': ''
@@ -1900,7 +2027,10 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                  'id': 'link_up_warn',
                  'disabled': False,
                  'state': 1,
-                 'sl': 0,
+                 'sl': {
+                     'value': 0,
+                     'precedence': 'message'
+                 },
                  'match_application': '1.3.6.1.6.3.1.1.5.4',
                  'set_text': 'Link of Port \\1 is up (\\2)',
                  'invert_matching': False,
@@ -1919,7 +2049,10 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                  'invert_matching': False,
                  'disabled': False,
                  'state': 1,
-                 'sl': 0,
+                 'sl': {
+                     'value': 0,
+                     'precedence': 'message'
+                 },
                  'docu_url': '',
                  'set_text': 'Link of Port \\1 is down (\\2)',
                  'id': 'link_down_warn',
@@ -1939,7 +2072,10 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                  'invert_matching': False,
                  'disabled': False,
                  'state': 1,
-                 'sl': 0,
+                 'sl': {
+                     'value': 0,
+                     'precedence': 'message'
+                 },
                  'docu_url': '',
                  'set_text': 'Link of Port \\1 is \\2',
                  'id': 'link',
@@ -1957,7 +2093,10 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                  'invert_matching': False,
                  'disabled': False,
                  'state': -1,
-                 'sl': 0,
+                 'sl': {
+                     'value': 0,
+                     'precedence': 'message'
+                 },
                  'docu_url': '',
                  'id': 'snmp_log',
                  'match': ''
@@ -1969,19 +2108,34 @@ for site, site_config in check_mk_config.get('sites', {}).items():
          }
     ]
 
-    files['{}/etc/check_mk/mkeventd.d/wato/rules.mk'.format(site_folder)] = {
-        'content': '\n'.join([
-            '# Written by Bundlewrap',
-            '# encoding: utf-8',
-            '',
+    rules_mk = [
+        '# Written by Bundlewrap',
+        '# encoding: utf-8',
+        '',
+    ]
+
+    if global_rules:
+        rules_mk += [
             'rules += [',
             ',\n'.join(global_rules),
             ']',
             '',
+        ]
+
+    if CHECK_MK_MAJOR_VERSION >= 2 and CHECK_MK_MINOR_VERSION >= 2:
+        rules_mk += [
+            'rule_packs += \\',
+            str(rule_packs),
+        ]
+    else:
+        rules_mk += [
             'rule_packs += [',
             ',\n'.join(map(lambda x: str(x), rule_packs)),
             ']',
-        ]) + '\n',
+        ]
+
+    files['{}/etc/check_mk/mkeventd.d/wato/rules.mk'.format(site_folder)] = {
+        'content': '\n'.join(rules_mk) + '\n',
         'owner': site,
         'group': site,
         'mode': DEFAULT_FILE_MODE,
