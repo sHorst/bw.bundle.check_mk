@@ -1,9 +1,13 @@
 from passlib.hash import md5_crypt, sha256_crypt, bcrypt
+from hashlib import md5
 from bundlewrap.utils.dicts import merge_dict
 from bundlewrap.exceptions import BundleError
 from pprint import pformat
+from datetime import datetime
 from re import match, sub
 import uuid
+
+global node, repo
 
 supported_versions = {
     'buster': {
@@ -29,7 +33,6 @@ supported_versions = {
 }
 
 _FOLDER_PATH_MACRO = "%#%FOLDER_PATH%#%"
-_FLOAT_MACRO = r"'%#%FLOAT\((-?\d+(?:\.\d+))\)%#%'"
 
 
 def sort_by_prio(x):
@@ -45,7 +48,7 @@ def sort_by_prio(x):
 
 
 def sort_by_tag(x):
-    sorting = ['site', 'address_family', 'ip-v4', 'agent', 'tcp', 'piggyback',
+    sorting = ['site', 'address_family', 'ip-v4', 'agent', 'tcp', 'checkmk-agent', 'piggyback',
                'snmp_ds', 'snmp', 'web', 'http', 'https', 'criticality', 'dist', 'ssh', 'networking', 'snmp-tcp', ]
     if x[0] in sorting:
         prio = 10 + sorting.index(x[0])
@@ -88,6 +91,22 @@ def format_services(services):
     return services
 
 
+def deep_replace_float(data):
+    _FLOAT_MACRO = r"%#%FLOAT\((-?\d+(?:\.\d+))\)%#%"
+
+    if isinstance(data, str) and match(_FLOAT_MACRO, data):
+        return float(sub(_FLOAT_MACRO, r'\1', data))
+
+    elif isinstance(data, dict):
+        return {k: deep_replace_float(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [deep_replace_float(v) for v in data]
+    elif isinstance(data, tuple):
+        return tuple([deep_replace_float(v) for v in data])
+    else:
+        return data
+
+
 def dict_to_string_python_2(format_dict):
     output = []
     for dict_key, dict_value in format_dict.items():
@@ -104,7 +123,7 @@ def dict_to_string_python_2(format_dict):
     return "{{{}}}".format(', '.join(output))
 
 
-def format_rule(rule_config):
+def format_rule(rule_config, width=80):
     check_mk_variables = ['ALL_HOSTS']
 
     if isinstance(rule_config, tuple) or isinstance(rule_config, list):
@@ -131,15 +150,11 @@ def format_rule(rule_config):
 
         if len(rule_config) >= 4:
             output += ', {}'.format(
-                pformat(rule_config[3]) if (CHECK_MK_MAJOR_VERSION >= 2) else dict_to_string_python_2(rule_config[3]),
+                pformat(rule_config[3], width=width) if (CHECK_MK_MAJOR_VERSION >= 2) else dict_to_string_python_2(rule_config[3]),
             )
 
         if len(rule_config) >= 5:
-            raise BundleError("Config Rule has to many values {item} in bundle '{bundle}'").format(
-                file=self.node.name,
-                bundle=bundle.name,
-                item=item_id,
-            )
+            raise BundleError("Config Rule has to many values in bundle 'check_mk'")
 
         output += ')'
 
@@ -165,14 +180,15 @@ def format_rule(rule_config):
                                     if isinstance(v1, list):
                                         v0['mode'][1][k1] = tuple(v1)
 
-            return sub(_FLOAT_MACRO, r'\1', pformat(rule_config).replace("'%s'" % _FOLDER_PATH_MACRO, "'/%s/' % FOLDER_PATH"))
+            return pformat(deep_replace_float(rule_config), width=width).\
+                replace("'%s'" % _FOLDER_PATH_MACRO, "'/%s/' % FOLDER_PATH")
         else:
             return dict_to_string_python_2(rule_config).replace("'%s'" % _FOLDER_PATH_MACRO, "'/%s/' % FOLDER_PATH")
     else:
         return rule_config
 
 
-def generate_rules(config_rules):
+def generate_rules(config_rules, width=80):
     output_rules = []
 
     for rule, rule_config in sorted(config_rules.items(), key=sort_by_prio):
@@ -192,7 +208,7 @@ def generate_rules(config_rules):
             output_rules += [
                 '{} = ['.format(rule)
             ]
-            output_rules += map(lambda x: "{},".format(format_rule(x)), rule_config)
+            output_rules += map(lambda x: "{},".format(format_rule(x, width=width)), rule_config)
             output_rules += [
                 '] + {}'.format(rule),
                 '',
@@ -205,7 +221,7 @@ def generate_rules(config_rules):
                     '',
                     '{}[\'{}\'] = ['.format(rule, subrule),
                 ]
-                output_rules += map(lambda x: "{},".format(format_rule(x)), subrule_config)
+                output_rules += map(lambda x: "{},".format(format_rule(x, width=width)), subrule_config)
                 output_rules += [
                     '] + {}[\'{}\']'.format(rule, subrule),
                     '',
@@ -213,6 +229,13 @@ def generate_rules(config_rules):
                 ]
 
     return output_rules
+
+
+def get_date_from_string(date_string):
+    if date_string is None:
+        return None
+
+    return datetime.strptime(date_string, '%Y-%m-%d %H:%M').timestamp()
 
 
 def generate_id_from_name(name_of_id):
@@ -227,7 +250,7 @@ CHECK_MK_MINOR_VERSION = int(CHECK_MK_VERSION.split('.')[1])
 
 SALT_LENGTH = 8
 if CHECK_MK_MAJOR_VERSION >= 2:
-    if CHECK_MK_MINOR_VERSION >= 2:
+    if CHECK_MK_MINOR_VERSION >= 1:
         SALT_LENGTH = 22
     else:
         SALT_LENGTH = 16
@@ -350,7 +373,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
     pw = repo.vault.password_for("check_mk_automation_htpasswd_{}_{}".format(node.name, site), length=16).value
 
     if CHECK_MK_MAJOR_VERSION >= 2:
-        if CHECK_MK_MINOR_VERSION >= 2:
+        if CHECK_MK_MINOR_VERSION >= 1:
             hashed_password = bcrypt.using(salt=seed, rounds=12).hash(pw)
         else:
             hashed_password = sha256_crypt.using(salt=seed, rounds=535000).hash(pw)
@@ -375,6 +398,9 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                 'show_mode': 'default_show_more',
             },
         }
+
+        if CHECK_MK_MINOR_VERSION >= 1:
+            check_mk_users['automation']['connector'] = 'htpasswd'
 
         contacts = {
             'automation': {
@@ -423,6 +449,9 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                 # 'start_url': None,
                 'show_mode': 'default_show_more',
             }
+
+            if CHECK_MK_MINOR_VERSION >= 1:
+                check_mk_users[admin]['connector'] = 'htpasswd'
 
             contacts[admin] = {
                 'alias': admin_config.get('alias', admin),
@@ -551,7 +580,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         )
 
         if CHECK_MK_MAJOR_VERSION >= 2:
-            if CHECK_MK_MINOR_VERSION >= 2:
+            if CHECK_MK_MINOR_VERSION >= 1:
                 hashed_password = bcrypt.using(salt=seed, rounds=12).hash(passwd)
             else:
                 hashed_password = sha256_crypt.using(salt=seed, rounds=535000).hash(passwd)
@@ -599,7 +628,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         )
 
         if CHECK_MK_MAJOR_VERSION >= 2:
-            if CHECK_MK_MINOR_VERSION >= 2:
+            if CHECK_MK_MINOR_VERSION >= 1:
                 seed = repo.vault. \
                     password_for("check_mk_automation_htpasswd_seed_{}_{}".format(node.name, site), length=22).value
                 hashed_password = bcrypt.using(salt=seed, rounds=12).hash(pw)
@@ -1222,15 +1251,22 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         ],
     }
 
-    define_hostgroups = []
+    if CHECK_MK_MAJOR_VERSION >= 2 and CHECK_MK_MINOR_VERSION >= 1:
+        define_hostgroups = {}
+        define_contactgroups = {
+              'all': 'Everything',
+        }
+
+    else:
+        define_hostgroups = []
+        define_contactgroups = [
+            "  'all': u'Everything',",
+        ]
+
     hostgroups = []
     for host_group, host_group_config in sorted(
             merge_dict(check_mk_config.get('host_groups', {}), site_config.get('host_groups', {})).items(),
             key=sort_by_prio):
-
-        define_hostgroups += [
-            "  '{}': u'{}',".format(host_group, host_group_config.get('description', {})),
-        ]
 
         if CHECK_MK_MAJOR_VERSION >= 2:
             hostgroups += [
@@ -1244,6 +1280,14 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                     description=host_group_config.get('description', {})
                 ),
             ]
+
+            if CHECK_MK_MINOR_VERSION >= 1:
+                define_hostgroups[host_group] = host_group_config.get('description', {})
+            else:
+                define_hostgroups += [
+                    "  '{}': u'{}',".format(host_group, host_group_config.get('description', {})),
+                ]
+
         else:
             hostgroups += [
                 "{{'condition': {condition},\n"
@@ -1254,10 +1298,10 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                     description=host_group_config.get('description', {})
                 ),
             ]
+            define_hostgroups += [
+                "  '{}': u'{}',".format(host_group, host_group_config.get('description', {})),
+            ]
 
-    define_contactgroups = [
-        "  'all': u'Everything',",
-    ]
     host_contactgroups = [
         # "{'condition': {}, 'options': {'description': u'Admins'}, 'value': 'notification'}",
     ]
@@ -1270,10 +1314,12 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             key=sort_by_prio):
 
         if CHECK_MK_MAJOR_VERSION >= 2:
-            # TODO: check, if this wato/groups.mk file is read
-            define_contactgroups += [
-                "  '{}': u'{}',".format(contact_group, contact_group_config.get('description', {})),
-            ]
+            if CHECK_MK_MINOR_VERSION >= 1:
+                define_contactgroups[contact_group] = contact_group_config.get('description', {})
+            else:
+                define_contactgroups += [
+                    "  '{}': u'{}',".format(contact_group, contact_group_config.get('description', {})),
+                ]
             host_contactgroups += [
                 "{{'condition': {{{condition}}},\n"
                 " 'id': '{id}',\n"
@@ -1320,38 +1366,63 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                 ),
             ]
 
-    # TODO: check, if this wato/groups.mk file is read
-    files['{}/etc/check_mk/conf.d/wato/groups.mk'.format(site_folder)] = {
-        'content': '\n'.join([
-                                 '# Written by Bundlewrap',
-                                 '# encoding: utf-8',
-                                 '',
-                                 "if type(define_hostgroups) != dict:",
-                                 "    define_hostgroups = {}",
-                                 "define_hostgroups.update({",
-                             ] +
-                             define_hostgroups +
-                             [
-                                 "})",
-                                 "",
-                                 "if type(define_contactgroups) != dict:",
-                                 "    define_contactgroups = {}",
-                                 "define_contactgroups.update({",
-                             ] +
-                             define_contactgroups +
-                             [
-                                 "})",
-                             ]) + '\n',
-        'owner': site,
-        'group': site,
-        'mode': DEFAULT_FILE_MODE,
-        'needs': [
-            'action:check_mk_create_{}_site'.format(site)
-        ],
-        'triggers': [
-            'action:check_mk_recompile_{}_site'.format(site),
-        ],
-    }
+    if CHECK_MK_MAJOR_VERSION >= 2 and CHECK_MK_MINOR_VERSION >= 1:
+        files['{}/etc/check_mk/conf.d/wato/groups.mk'.format(site_folder)] = {
+            'content': '\n'.join([
+                                     '# Written by Bundlewrap',
+                                     '# encoding: utf-8',
+                                     '',
+                                     "if type(define_hostgroups) != dict:",
+                                     "    define_hostgroups = {}",
+                                     f"define_hostgroups.update({define_hostgroups})",
+                                     "",
+                                     "if type(define_contactgroups) != dict:",
+                                     "    define_contactgroups = {}",
+                                     f"define_contactgroups.update({define_contactgroups})",
+                                     "",
+                                 ]) + '\n',
+            'owner': site,
+            'group': site,
+            'mode': DEFAULT_FILE_MODE,
+            'needs': [
+                'action:check_mk_create_{}_site'.format(site)
+            ],
+            'triggers': [
+                'action:check_mk_recompile_{}_site'.format(site),
+            ],
+        }
+    else:
+        files['{}/etc/check_mk/conf.d/wato/groups.mk'.format(site_folder)] = {
+            'content': '\n'.join([
+                                     '# Written by Bundlewrap',
+                                     '# encoding: utf-8',
+                                     '',
+                                     "if type(define_hostgroups) != dict:",
+                                     "    define_hostgroups = {}",
+                                     "define_hostgroups.update({",
+                                 ] +
+                                 define_hostgroups +
+                                 [
+                                     "})",
+                                     "",
+                                     "if type(define_contactgroups) != dict:",
+                                     "    define_contactgroups = {}",
+                                     "define_contactgroups.update({",
+                                 ] +
+                                 define_contactgroups +
+                                 [
+                                     "})",
+                                 ]) + '\n',
+            'owner': site,
+            'group': site,
+            'mode': DEFAULT_FILE_MODE,
+            'needs': [
+                'action:check_mk_create_{}_site'.format(site)
+            ],
+            'triggers': [
+                'action:check_mk_recompile_{}_site'.format(site),
+            ],
+        }
 
     rules = merge_dict(check_mk_config.get('global_rules', {}), site_config.get('rules', {}))
     rules['host_groups'] = hostgroups
@@ -1398,7 +1469,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
 
         if rules:
             files['{}/etc/check_mk/conf.d/wato/{}/rules.mk'.format(site_folder, folder)] = {
-                'content': '\n'.join(rules) + '\n',
+                'content': '\n' + '\n'.join(rules) + '\n',
                 'owner': site,
                 'group': site,
                 'mode': DEFAULT_FILE_MODE,
@@ -1414,36 +1485,72 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                 'delete': True,
             }
 
-        files['{}/etc/check_mk/conf.d/wato/{}/.wato'.format(site_folder, folder)] = {
-            'content': '\n'.join([
-                "{'attributes': {'meta_data': {'created_at': None, 'created_by': None}},",
-                " 'lock': False,",
-                " 'lock_subfolders': False,",
-                " 'num_hosts': {num_hosts},".format(num_hosts=len(folder_config.get('hosts', []))),
-                " 'title': u'{title}'}}".format(title=folder),
-            ]) + '\n',
-            'owner': site,
-            'group': site,
-            'mode': DEFAULT_FILE_MODE,
-            'needs': [
-                'action:check_mk_create_{}_site'.format(site),
-            ],
-            'triggers': [
-                'action:check_mk_recompile_{}_site'.format(site),
-            ],
+        if CHECK_MK_MAJOR_VERSION >= 2 and CHECK_MK_MINOR_VERSION >= 1:
+            folder_wato_content = {
+                'title': folder,
+                'attributes': {
+                    'meta_data': {
+                        'created_at': get_date_from_string(folder_config.get('created_at', None)),
+                        'created_by': get_date_from_string(folder_config.get('created_by', None)),
+                        'updated_at': get_date_from_string(folder_config.get('updated_at', None)),
+                    }
+                },
+                'num_hosts': len(folder_config.get('hosts', [])),
+                'lock': False,
+                'lock_subfolders': False,
+                # This is not used vor crypto, so md5 is fine here
+                '__id': folder_config.get('id', md5(f'{site}_{folder}_wato_id'.encode('utf-8')).hexdigest()),
+            }
+
+            files['{}/etc/check_mk/conf.d/wato/{}/.wato'.format(site_folder, folder)] = {
+                'content': f'{folder_wato_content}\n',
+                'owner': site,
+                'group': site,
+                'mode': DEFAULT_FILE_MODE,
+                'needs': [
+                    'action:check_mk_create_{}_site'.format(site),
+                ],
+                'triggers': [
+                    'action:check_mk_recompile_{}_site'.format(site),
+                ],
+            }
+        else:
+            files['{}/etc/check_mk/conf.d/wato/{}/.wato'.format(site_folder, folder)] = {
+                'content': '\n'.join([
+                    "{'attributes': {'meta_data': {'created_at': None, 'created_by': None}},",
+                    " 'lock': False,",
+                    " 'lock_subfolders': False,",
+                    " 'num_hosts': {num_hosts},".format(num_hosts=len(folder_config.get('hosts', []))),
+                    " 'title': u'{title}'}}".format(title=folder),
+                ]) + '\n',
+                'owner': site,
+                'group': site,
+                'mode': DEFAULT_FILE_MODE,
+                'needs': [
+                    'action:check_mk_create_{}_site'.format(site),
+                ],
+                'triggers': [
+                    'action:check_mk_recompile_{}_site'.format(site),
+                ],
+            }
+
+        variables = {
+            'ipaddresses': {},
+            'explicit_snmp_communities': {},
+            'management_ipmi_credentials': {},
+            'management_protocol': {},
         }
 
-        ipaddresses = {}
-        snmp_communities = {}
-        management_ipmi_credentials = {}
-        management_protocol = {}
-
         if CHECK_MK_MAJOR_VERSION >= 2:
+            host_variables = {
+                'host_tags': {},
+                'host_labels': {},
+            }
+
             all_hosts = []
-            update_host_tags = {}
-            update_host_labels = {}
             extra_host_config_parents = []
             host_attributes = {}
+            folder_attributes = {}
 
             rediscover_hosts = []
             for host in sorted(folder_config.get('hosts', []), key=sort_hostnames):
@@ -1477,6 +1584,9 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                 if tags['agent'] in ['cmk-agent', 'snmp-tcp', 'special-agents']:
                     tags.setdefault('tcp', 'tcp')
 
+                if CHECK_MK_MINOR_VERSION >= 1 and tags['agent'] == 'cmk-agent':
+                    tags.setdefault('checkmk-agent', 'checkmk-agent')
+
                 attributes = host.get('attributes', {})
                 attributes['meta_data'] = {
                     'created_at': 1618603607.2782695,
@@ -1497,10 +1607,10 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                 labels = host.get('labels', {})
 
                 all_hosts += [host['hostname'], ]
-                update_host_tags[host['hostname']] = sorted_tags(tags)
+                host_variables['host_tags'][host['hostname']] = sorted_tags(tags)
 
                 if len(labels):
-                    update_host_labels[host['hostname']] = sorted_labels(labels)
+                    host_variables['host_labels'][host['hostname']] = sorted_labels(labels)
 
                 parents = host.get('parents', [])
 
@@ -1515,20 +1625,20 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                 ip = host.get('ip_address', None)
 
                 if ip:
-                    ipaddresses[host['hostname']] = ip
+                    variables['ipaddresses'][host['hostname']] = ip
                     attributes['ipaddress'] = ip
 
                 snmp_community = host.get('snmp_community', None)
 
                 if snmp_community:
-                    snmp_communities[host['hostname']] = snmp_community
+                    variables['explicit_snmp_communities'][host['hostname']] = snmp_community
                     attributes['snmp_community'] = snmp_community
 
                 if host.get('management_ipmi_credentials', None):
-                    management_ipmi_credentials[host['hostname']] = host['management_ipmi_credentials']
+                    variables['management_ipmi_credentials'][host['hostname']] = host['management_ipmi_credentials']
                     attributes['management_ipmi_credentials'] = host['management_ipmi_credentials']
 
-                    management_protocol[host['hostname']] = 'ipmi'
+                    variables['management_protocol'][host['hostname']] = 'ipmi'
                     attributes['management_protocol'] = 'ipmi'
 
                 if host.get('management_address', None):
@@ -1551,15 +1661,26 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                 '# Written by Bundlewrap',
                 '# encoding: utf-8',
                 '',
-                '_lock = True',
-                '',
+            ]
+
+            if folder_config.get('locked', site_config.get('locked_config', True)):
+                hosts_content += [
+                    '_lock = True',
+                    '',
+                ]
+
+            hosts_content += [
                 "all_hosts += {}".format(str(sorted(all_hosts))),
                 '',
-                "host_tags.update({})".format(str(sorted_dict(update_host_tags))),
-                "",
-                'host_labels.update({})'.format(str(sorted_dict(update_host_labels))),
-                "",
             ]
+
+            for var_name, var_content in host_variables.items():
+                if var_content:
+                    sorted_var_content = sorted_dict(var_content)
+                    hosts_content += [
+                        f'{var_name}.update({sorted_var_content})',
+                        "",
+                    ]
 
         else:
             all_hosts = []
@@ -1634,20 +1755,20 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                 ip = host.get('ip_address', None)
 
                 if ip:
-                    ipaddresses[host['hostname']] = ip
+                    variables['ipaddresses'][host['hostname']] = ip
                     attributes['ipaddress'] = ip
 
                 snmp_community = host.get('snmp_community', None)
 
                 if snmp_community:
-                    snmp_communities[host['hostname']] = snmp_community
+                    variables['explicit_snmp_communities'][host['hostname']] = snmp_community
                     attributes['snmp_community'] = snmp_community
 
                 if host.get('management_ipmi_credentials', None):
-                    management_ipmi_credentials[host['hostname']] = host['management_ipmi_credentials']
+                    variables['management_ipmi_credentials'][host['hostname']] = host['management_ipmi_credentials']
                     attributes['management_ipmi_credentials'] = host['management_ipmi_credentials']
 
-                    management_protocol[host['hostname']] = 'ipmi'
+                    variables['management_protocol'][host['hostname']] = 'ipmi'
                     attributes['management_protocol'] = 'ipmi'
 
                 if host.get('management_address', None):
@@ -1684,33 +1805,14 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                 "",
             ]
 
-        if ipaddresses:
-            hosts_content += [
-                "# Explicit IPv4 addresses",
-                "ipaddresses.update({})".format(ipaddresses),
-                '',
-            ]
-
-        if snmp_communities:
-            hosts_content += [
-                "# Explicit SNMP communities",
-                "explicit_snmp_communities.update({})".format(snmp_communities),
-                '',
-            ]
-
-        if management_ipmi_credentials:
-            hosts_content += [
-                "# Management board IPMI credentials",
-                "management_ipmi_credentials.update({})".format(management_ipmi_credentials),
-                '',
-            ]
-
-        if management_protocol:
-            hosts_content += [
-                "# Management board protocol",
-                "management_protocol.update({})".format(management_protocol),
-                '',
-            ]
+        for var_name, var_content in variables.items():
+            if var_content:
+                sorted_var_content = sorted_dict(var_content)
+                hosts_content += [
+                    f'# {var_name}',
+                    f'{var_name}.update({sorted_var_content})',
+                    '',
+                ]
 
         if extra_host_config_parents:
             hosts_content += [
@@ -1720,11 +1822,17 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                              ] + extra_host_config_parents + ["])", ]
 
         if CHECK_MK_MAJOR_VERSION >= 2:
+            sorted_host_attributes = sorted_dict(host_attributes)
             hosts_content += [
                 "# Host attributes (needed for WATO)",
-                "host_attributes.update(",
-                "{})".format(str(sorted_dict(host_attributes))),
+                f"host_attributes.update({sorted_host_attributes})",
             ]
+            if CHECK_MK_MINOR_VERSION >= 1:
+                # TODO: fill with content
+                hosts_content += [
+                    "",
+                    "folder_attributes.update({})"
+                ]
         else:
             hosts_content += [
                 "# Host attributes (needed for WATO)",
