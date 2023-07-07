@@ -251,7 +251,7 @@ CHECK_MK_MINOR_VERSION = int(CHECK_MK_VERSION.split('.')[1])
 SALT_LENGTH = 8
 if CHECK_MK_MAJOR_VERSION >= 2:
     if CHECK_MK_MINOR_VERSION >= 1:
-        SALT_LENGTH = 22
+        SALT_LENGTH = 21  # plus '.' for correct padding of salt
     else:
         SALT_LENGTH = 16
 
@@ -374,7 +374,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
 
     if CHECK_MK_MAJOR_VERSION >= 2:
         if CHECK_MK_MINOR_VERSION >= 1:
-            hashed_password = bcrypt.using(salt=seed, rounds=12).hash(pw)
+            hashed_password = bcrypt.using(salt=seed + '.', rounds=12).hash(pw)
         else:
             hashed_password = sha256_crypt.using(salt=seed, rounds=535000).hash(pw)
     else:
@@ -581,7 +581,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
 
         if CHECK_MK_MAJOR_VERSION >= 2:
             if CHECK_MK_MINOR_VERSION >= 1:
-                hashed_password = bcrypt.using(salt=seed, rounds=12).hash(passwd)
+                hashed_password = bcrypt.using(salt=seed + '.', rounds=12).hash(passwd)
             else:
                 hashed_password = sha256_crypt.using(salt=seed, rounds=535000).hash(passwd)
         else:
@@ -630,8 +630,8 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         if CHECK_MK_MAJOR_VERSION >= 2:
             if CHECK_MK_MINOR_VERSION >= 1:
                 seed = repo.vault. \
-                    password_for("check_mk_automation_htpasswd_seed_{}_{}".format(node.name, site), length=22).value
-                hashed_password = bcrypt.using(salt=seed, rounds=12).hash(pw)
+                    password_for("check_mk_automation_htpasswd_seed_{}_{}".format(node.name, site), length=21).value
+                hashed_password = bcrypt.using(salt=seed + '.', rounds=12).hash(pw)
             else:
                 hashed_password = sha256_crypt.using(salt=salt, rounds=535000).hash(passwd)
         else:
