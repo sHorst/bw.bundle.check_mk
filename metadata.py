@@ -1,3 +1,5 @@
+global node, metadata_reactor, repo, DoNotRunAgain
+
 defaults = {}
 
 # if node.has_bundle('dehydrated') and not node.has_bundle('apache'):
