@@ -389,6 +389,16 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         'automation:{}'.format(hashed_password),
     ]
 
+    files[f'{site_folder}/var/check_mk/web/automation/automation.secret'] = {
+        'content': repo.vault.password_for(f'check_mk_automation_secret_{node.name}_{site}').value + '\n',
+        'owner': site,
+        'group': site,
+        'mode': DEFAULT_FILE_MODE,
+        'needs': [
+            'action:check_mk_create_{}_site'.format(site)
+        ],
+    }
+
     if CHECK_MK_MAJOR_VERSION >= 2:
         check_mk_users = {
             'automation': {
