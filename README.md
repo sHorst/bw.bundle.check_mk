@@ -3,6 +3,18 @@ Check MK Server
 
 This Repository contains the bundlewrap bundle for an check_mk server. It will be installed via OMD.
 
+Install
+-------
+To make this bundle work, you need to insert the items/pkg_mkp.py to the bw repository. This can be done with this command:
+
+```shell
+ln -s ../bundles/check_mk/items/pkg_mkp.py items/pkg_mkp.py
+```
+
+Dependencies
+------------
+Packages defined in ```metadata.py``` and installed via [apt-Bundle](https://github.com/sHorst/bw.bundle.apt).
+
 Config
 ------
 
@@ -382,6 +394,15 @@ metadata = {
                 'url': 'https://monitoring.example.com',
                 'livestatus': True,
                 'admins': ['stefan', ],
+                
+                # install this Packages from the CheckMK Exchange
+                'add_packages': {
+                    'apcaccess': {
+                        'version': '5.2.1',
+                        'url': 'https://exchange.checkmk.com/packages/apcaccess/1105/apcaccess-5.2.1.mkp',
+                        'hash': '1d0d1a31429c48fd251395969bc4c96dcd6291c4c8c61165666340213fe10711',
+                    },
+                },
 
                 'locked_config': False,  # wether or not add the _locked = True flag to configs
 

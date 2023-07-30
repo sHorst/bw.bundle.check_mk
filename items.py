@@ -291,6 +291,7 @@ actions = {
         ],
     }
 }
+pkg_mkp = {}
 
 
 for site, site_config in check_mk_config.get('sites', {}).items():
@@ -738,8 +739,12 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         }
 
         for server in site_config.get('livestatus_server', {}):
+            status_host = None
+            if server.get('name', ''):
+                status_host = (site, server.get('hostname'))
+
             multisites['{}_on_{}'.format(server.get('site', ''), server.get('name', '').replace('.', '_'))] = {
-                'status_host': None,
+                'status_host': status_host,
                 'user_sync': 'all',
                 'user_login': True,
                 'insecure': False,
@@ -2149,3 +2154,14 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             'action:check_mk_recompile_{}_site'.format(site),
         ],
     }
+
+    # Add Additional Packages via mkp
+    for pkg_name, pkg_config in site_config.get('add_packages', {}).items():
+        k = f'{site}/{pkg_name}' + ('@' + pkg_config['version'] if pkg_config.get('version', False) else '')
+
+        pkg_mkp[k] = {
+            'url': pkg_config['url'],
+        }
+
+        if pkg_config.get('hash', False):
+            pkg_mkp[k]['hash'] = pkg_config['hash']
