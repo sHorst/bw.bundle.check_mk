@@ -187,6 +187,13 @@ def add_iptables_rules(metadata):
     # add ipTables rules
     if node.has_bundle("iptables"):
         for interface in interfaces:
+            # allow agent-receiver
+            iptables_rules += repo.libs.iptables.accept(). \
+                input(interface). \
+                state_new(). \
+                tcp(). \
+                dest_port(8000)
+
             # allow snmp traps
             iptables_rules += repo.libs.iptables.accept(). \
                 input(interface). \
