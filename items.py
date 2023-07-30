@@ -24,6 +24,9 @@ supported_versions = {
         '2.1.0p29': '48799bb35f48ec082075ed02f85a56c8544c8f598a359e7491c00861777cfb73',
         '2.1.0p30': '0c48b0e86bb237c2c4536f1b57689ce18954713c243626015d468d27de4cc2f8',
         '2.2.0p4': '6a188c633a88fc702803dfe7ab1a5b84e3a4528938f7a44c7eee97fbc12b4b03',
+        '2.2.0p5': 'db86e55686b45c0db88c052707a1b98240cc4a9d0d073fed2811adc196116df2',
+        '2.2.0p6': '5deed05dd3619d44e1a503a406860448bb7b8cb380c3cb72eadc4e6260eab689',
+        '2.2.0p7': 'd534c5952469e85036fde62103f67169a36c0fa4ff32c300d304e16a641df2ee',
     },
     'bookworm': {
         # https://download.checkmk.com/checkmk/2.0.0p13/check-mk-raw-2.0.0p13_0.bookworm_amd64.deb
