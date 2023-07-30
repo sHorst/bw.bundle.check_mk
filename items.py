@@ -406,6 +406,11 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         if CHECK_MK_MINOR_VERSION >= 1:
             check_mk_users['automation']['connector'] = 'htpasswd'
 
+            check_mk_users['automation']['temperature_unit'] = None
+            check_mk_users['automation']['force_authuser'] = False
+            check_mk_users['automation']['nav_hide_icons_title'] = None
+            check_mk_users['automation']['icons_per_item'] = None
+
         contacts = {
             'automation': {
                 'alias': u'Check_MK Automation - used for calling web services',
@@ -416,6 +421,10 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                 'user_scheme_serial': 1,
             },
         }
+        if CHECK_MK_MINOR_VERSION >= 1:
+            contacts['automation']['fallback_contact'] = False
+            contacts['automation']['disable_notifications'] = {}
+
     else:
         check_mk_users = [
             'u\'automation\': {'
