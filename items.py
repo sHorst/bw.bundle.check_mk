@@ -2162,9 +2162,21 @@ for site, site_config in check_mk_config.get('sites', {}).items():
     for pkg_name, pkg_config in site_config.get('add_packages', {}).items():
         k = f'{site}/{pkg_name}' + ('@' + pkg_config['version'] if pkg_config.get('version', False) else '')
 
-        pkg_mkp[k] = {
-            'url': pkg_config['url'],
-        }
+        if pkg_config.get('installed', True):
+            pkg_mkp[k] = {
+                'installed': True,
+                'url': pkg_config['url'],
+                'triggers': [
+                    'action:check_mk_recompile_{}_site'.format(site),
+                ],
+            }
 
-        if pkg_config.get('hash', False):
-            pkg_mkp[k]['hash'] = pkg_config['hash']
+            if pkg_config.get('hash', False):
+                pkg_mkp[k]['hash'] = pkg_config['hash']
+        else:
+            pkg_mkp[k] = {
+                'installed': False,
+                'triggers': [
+                    'action:check_mk_recompile_{}_site'.format(site),
+                ],
+            }

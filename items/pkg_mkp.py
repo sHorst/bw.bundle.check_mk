@@ -181,13 +181,20 @@ class MkpPkg(Pkg):
             if not isinstance(attributes.get(str_attr, ''), str):
                 raise BundleError(_(f"expected String for '{str_attr}' on {item_id} in bundle '{bundle.name}'"))
 
-    def get_auto_deps(self, items):
-        deps = []
+    def get_auto_attrs(self, items):
+        attrs = {
+            'needs': [],
+            # 'triggers': [],
+        }
         for item in items:
             # debian TODO: add other package manager
             if item.ITEM_TYPE_NAME == 'pkg_apt' and item.name == 'curl':
-                deps.append(item.id)
+                attrs['needs'].append(item.id)
 
             if item.ITEM_TYPE_NAME == 'action' and item.name == f'check_mk_create_{self.site}_site':
-                deps.append(item.id)
-        return deps
+                attrs['needs'].append(item.id)
+
+            # if item.ITEM_TYPE_NAME == 'action' and item.name == f'check_mk_recompile_{self.site}_site':
+            #     attrs['triggers'].append(item.id)
+
+        return attrs
