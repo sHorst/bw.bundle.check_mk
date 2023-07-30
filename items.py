@@ -1787,6 +1787,9 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                         folder=site_folder,
                         host=host['hostname']
                     ),
+                    'triggers': [
+                        f'action:check_mk_recompile_{site}_site',
+                    ],
                     'triggered': True,
                 }
             hosts_content = [
