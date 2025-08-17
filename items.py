@@ -27,6 +27,8 @@ supported_versions = {
         '2.2.0p5': 'db86e55686b45c0db88c052707a1b98240cc4a9d0d073fed2811adc196116df2',
         '2.2.0p6': '5deed05dd3619d44e1a503a406860448bb7b8cb380c3cb72eadc4e6260eab689',
         '2.2.0p7': 'd534c5952469e85036fde62103f67169a36c0fa4ff32c300d304e16a641df2ee',
+        '2.2.0p45': '5e7c7dc20e926d2391e0a9c0672640300b98c3b4290d830362056ae25482cb93',
+        '2.3.0p35': 'cfc922265ab7b1275f1ef5df9c13b8c8122b1572f4f16c6da1ba0d872fc35483',
     },
     'bookworm': {
         # https://download.checkmk.com/checkmk/2.0.0p13/check-mk-raw-2.0.0p13_0.bookworm_amd64.deb
@@ -250,6 +252,7 @@ check_mk_config = node.metadata.get('check_mk', {})
 CHECK_MK_VERSION = check_mk_config.get('version', '1.6.0p9')
 CHECK_MK_MAJOR_VERSION = int(CHECK_MK_VERSION.split('.')[0])
 CHECK_MK_MINOR_VERSION = int(CHECK_MK_VERSION.split('.')[1])
+CHECK_MK_PATCH_VERSION = int(CHECK_MK_VERSION.split('.')[2].split('p')[1])
 
 SALT_LENGTH = 8
 if CHECK_MK_MAJOR_VERSION >= 2:
@@ -1299,7 +1302,8 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                 'mssql_transactionlogs',
                 'mssql_versions'
             ]
-        global_mk_config['enable_rulebased_notifications'] = True
+        if CHECK_MK_PATCH_VERSION <= 40:
+            global_mk_config['enable_rulebased_notifications'] = True
     else:
         global_mk += [
             '# encoding: utf-8',
