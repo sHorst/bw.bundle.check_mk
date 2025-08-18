@@ -29,11 +29,14 @@ supported_versions = {
         '2.2.0p7': 'd534c5952469e85036fde62103f67169a36c0fa4ff32c300d304e16a641df2ee',
         '2.2.0p45': '5e7c7dc20e926d2391e0a9c0672640300b98c3b4290d830362056ae25482cb93',
         '2.3.0p35': 'cfc922265ab7b1275f1ef5df9c13b8c8122b1572f4f16c6da1ba0d872fc35483',
+        '2.4.0p9': '9499d95ea16632c1e513a4d3e37778662dcd9a5356544c62748d35c92e365024',
     },
     'bookworm': {
         # https://download.checkmk.com/checkmk/2.0.0p13/check-mk-raw-2.0.0p13_0.bookworm_amd64.deb
         '2.0.0p13': '369bd2d59c8227acf6f501f4b19fee2d3ff4c3d2e1216c0c37826cb87a4376eb',
         '2.2.0p4': '6a188c633a88fc702803dfe7ab1a5b84e3a4528938f7a44c7eee97fbc12b4b03',
+        '2.3.0p35': '02a68151e286e7dfec2e4f14433c2fe0eb1b5bcb2cbcdc17bfc9d201828ace5e',
+        '2.4.0p9': 'ef5441b87e7c082bf14b20d7447e4123b3254ca41409f27a70789fc1ada33001',
     }
 }
 
@@ -380,7 +383,9 @@ for site, site_config in check_mk_config.get('sites', {}).items():
     pw = repo.vault.password_for("check_mk_automation_htpasswd_{}_{}".format(node.name, site), length=16).value
 
     if CHECK_MK_MAJOR_VERSION >= 2:
-        if CHECK_MK_MINOR_VERSION >= 1:
+        if CHECK_MK_MINOR_VERSION >= 3:
+            hashed_password = bcrypt.using(salt=seed + '.', rounds=12, ident='2y').hash(pw)
+        elif CHECK_MK_MINOR_VERSION >= 1:
             hashed_password = bcrypt.using(salt=seed + '.', rounds=12).hash(pw)
         else:
             hashed_password = sha256_crypt.using(salt=seed, rounds=535000).hash(pw)
@@ -437,6 +442,11 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         if CHECK_MK_MINOR_VERSION >= 1:
             contacts['automation']['fallback_contact'] = False
             contacts['automation']['disable_notifications'] = {}
+
+        if CHECK_MK_MINOR_VERSION >= 4:
+            del check_mk_users['automation']['automation_secret']
+            contacts['automation']['store_automation_secret'] = True
+            contacts['automation']['is_automation_user'] = True
 
     else:
         check_mk_users = [
@@ -518,6 +528,10 @@ for site, site_config in check_mk_config.get('sites', {}).items():
 
             contacts[admin]['force_authuser_webservice'] = False
             contacts[admin]['user_scheme_serial'] = 1
+
+            if CHECK_MK_MINOR_VERSION >= 4:
+                contacts[admin]['store_automation_secret'] = False
+                contacts[admin]['is_automation_user'] = False
         else:
             check_mk_users += [
                 # 'force_authuser_webservice': False, 'locked': False, 'roles': ['admin'], 'force_authuser': False, 'ui_theme': None, 'alias': u'Stefan Horst', 'start_url': None
@@ -760,12 +774,17 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             },
         }
 
+        if CHECK_MK_MINOR_VERSION >= 4:
+            multisites[site]['message_broker_port'] = site_config.get('message_broker_port', 5672)
+
         for server in site_config.get('livestatus_server', {}):
             status_host = None
             if server.get('name', ''):
                 status_host = (site, server.get('hostname'))
 
-            multisites['{}_on_{}'.format(server.get('site', ''), server.get('name', '').replace('.', '_'))] = {
+            server_site_name = '{}_on_{}'.format(server.get('site', ''), server.get('name', '').replace('.', '_'))
+
+            multisites[server_site_name] = {
                 'status_host': status_host,
                 'user_sync': 'all',
                 'user_login': True,
@@ -784,6 +803,9 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                 'replicate_ec': True,
                 'proxy': None,
             }
+
+            if CHECK_MK_MINOR_VERSION >= 4:
+                multisites[server_site_name]['message_broker_port'] = server.get('message_broker_port', 5672)
 
         files['{}/etc/check_mk/multisite.d/sites.mk'.format(site_folder)] = {
             'content': '\n'.join([
@@ -812,7 +834,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
             '',
         ]
 
-        if CHECK_MK_MINOR_VERSION >= 2:
+        if 2 <= CHECK_MK_MINOR_VERSION < 4:
             global_configuration = dict(sorted(global_configuration.items()))
 
         for k, v in global_configuration.items():
@@ -1200,6 +1222,9 @@ for site, site_config in check_mk_config.get('sites', {}).items():
     if CHECK_MK_MAJOR_VERSION >= 2 and CHECK_MK_MINOR_VERSION >= 2:
         global_notification_rules[0]['rule_id'] = 'ca159a3e-989d-4bfa-b93a-2f657f9c2884'
 
+    if CHECK_MK_MAJOR_VERSION >= 2 and CHECK_MK_MINOR_VERSION >= 4:
+        global_notification_rules[0]['notify_plugin'] = ('mail', 'e9ad1283-4905-4654-baa9-71d93fe68d70')
+
     notifications = [
         '# Written by Bundlewrap',
     ]
@@ -1244,7 +1269,65 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         'notification_fallback_email': site_config.get('admin_email', ''),
     }
 
-    if CHECK_MK_MAJOR_VERSION >= 2 and CHECK_MK_MINOR_VERSION >= 2:
+    if CHECK_MK_MAJOR_VERSION >= 2 and CHECK_MK_MINOR_VERSION >= 3:
+        global_mk_config['use_new_descriptions_for'] = [
+            'df',
+            'df_netapp',
+            'df_netapp32',
+            'esx_vsphere_datastores',
+            'hr_fs',
+            'vms_diskstat_df',
+            'zfsget',
+            'ps',
+            'ps_perf',
+            'wmic_process',
+            'services',
+            'logwatch',
+            'logwatch_groups',
+            'cmk_inventory',
+            'hyperv_vms',
+            'ibm_svc_mdiskgrp',
+            'ibm_svc_system',
+            'ibm_svc_systemstats_diskio',
+            'ibm_svc_systemstats_iops',
+            'ibm_svc_systemstats_disk_latency',
+            'ibm_svc_systemstats_cache',
+            'casa_cpu_temp',
+            'cmciii_temp',
+            'cmciii_psm_current',
+            'cmciii_lcp_airin',
+            'cmciii_lcp_airout',
+            'cmciii_lcp_water',
+            'etherbox_temp',
+            'liebert_bat_temp',
+            'nvidia_temp',
+            'ups_bat_temp',
+            'innovaphone_temp',
+            'enterasys_temp',
+            'raritan_emx',
+            'raritan_pdu_inlet',
+            'mknotifyd',
+            'mknotifyd_connection',
+            'postfix_mailq',
+            'nullmailer_mailq',
+            'barracuda_mailqueues',
+            'qmail_stats',
+            'http',
+            'mssql_backup',
+            'mssql_counters_cache_hits',
+            'mssql_counters_transactions',
+            'mssql_counters_locks',
+            'mssql_counters_sqlstats',
+            'mssql_counters_pageactivity',
+            'mssql_counters_locks_per_batch',
+            'mssql_counters_file_sizes',
+            'mssql_databases',
+            'mssql_datafiles',
+            'mssql_tablespaces',
+            'mssql_transactionlogs',
+            'mssql_versions'
+        ]
+    elif CHECK_MK_MAJOR_VERSION >= 2 and CHECK_MK_MINOR_VERSION >= 2:
         global_mk_config['use_new_descriptions_for'] = [
                 'df',
                 'df_netapp',
@@ -1640,7 +1723,36 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                 'delete': True,
             }
 
-        if CHECK_MK_MAJOR_VERSION >= 2 and CHECK_MK_MINOR_VERSION >= 1:
+        if CHECK_MK_MAJOR_VERSION >= 2 and CHECK_MK_MINOR_VERSION >= 3:
+            folder_wato_content = {
+                # This is not used vor crypto, so md5 is fine here
+                '__id': folder_config.get('id', md5(f'{site}_{folder}_wato_id'.encode('utf-8')).hexdigest()),
+                'title': folder,
+                'attributes': {
+                    'meta_data': {
+                        'created_at': get_date_from_string(folder_config.get('created_at', None)),
+                        'created_by': get_date_from_string(folder_config.get('created_by', None)),
+                        'updated_at': get_date_from_string(folder_config.get('updated_at', None)),
+                    }
+                },
+                'num_hosts': len(folder_config.get('hosts', [])),
+                'lock': False,
+                'lock_subfolders': False,
+            }
+
+            files['{}/etc/check_mk/conf.d/wato/{}/.wato'.format(site_folder, folder)] = {
+                'content': f'{folder_wato_content}\n',
+                'owner': site,
+                'group': site,
+                'mode': DEFAULT_FILE_MODE,
+                'needs': [
+                    'action:check_mk_create_{}_site'.format(site),
+                ],
+                'triggers': [
+                    'action:check_mk_recompile_{}_site'.format(site),
+                ],
+            }
+        elif CHECK_MK_MAJOR_VERSION >= 2 and CHECK_MK_MINOR_VERSION >= 1:
             folder_wato_content = {
                 'title': folder,
                 'attributes': {
@@ -1764,7 +1876,7 @@ for site, site_config in check_mk_config.get('sites', {}).items():
                 all_hosts += [host['hostname'], ]
                 host_variables['host_tags'][host['hostname']] = sorted_tags(tags)
 
-                if len(labels):
+                if len(labels) or (CHECK_MK_MAJOR_VERSION >= 2 and CHECK_MK_MINOR_VERSION >= 3):
                     host_variables['host_labels'][host['hostname']] = sorted_labels(labels)
 
                 parents = host.get('parents', [])
