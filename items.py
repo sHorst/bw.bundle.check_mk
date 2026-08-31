@@ -37,7 +37,14 @@ supported_versions = {
         '2.2.0p4': '6a188c633a88fc702803dfe7ab1a5b84e3a4528938f7a44c7eee97fbc12b4b03',
         '2.3.0p35': '02a68151e286e7dfec2e4f14433c2fe0eb1b5bcb2cbcdc17bfc9d201828ace5e',
         '2.4.0p9': 'ef5441b87e7c082bf14b20d7447e4123b3254ca41409f27a70789fc1ada33001',
-    }
+        '2.4.0p30': 'cad66cc34b3ff6aeb5e2fb242eb7b33cf8eba770e9e4b156b84f3a5a2961ff47',
+        '2.5.0p4': 'd4142e4cf5b6f18436d9e3179c5be570e3eb2177a9f29729e4cada1f649bd610',
+    },
+    'trixie': {
+        # https://download.checkmk.com/checkmk/2.4.0p30/check-mk-raw-2.4.0p30_0.trixie_amd64.deb
+        '2.4.0p30': '0d2b0d863c398d9ff215b49c23e6e7f5a15f8ace8cb4f25efcb78404b165950c',
+        '2.5.0p4': '80d3a612c7550ba81f95f06d8cdd58b152a64bc3e4ad84212156723a8f532d7a',
+    },
 }
 
 _FOLDER_PATH_MACRO = "%#%FOLDER_PATH%#%"
