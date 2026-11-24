@@ -38,6 +38,7 @@ supported_versions = {
         '2.3.0p35': '02a68151e286e7dfec2e4f14433c2fe0eb1b5bcb2cbcdc17bfc9d201828ace5e',
         '2.4.0p9': 'ef5441b87e7c082bf14b20d7447e4123b3254ca41409f27a70789fc1ada33001',
         '2.4.0p30': 'cad66cc34b3ff6aeb5e2fb242eb7b33cf8eba770e9e4b156b84f3a5a2961ff47',
+        '2.4.0p42': '7f948fda62f74b07012a143dee92b4cd72aba54eb29d9298569e4d92dc5a3db7',
         '2.5.0p4': 'd4142e4cf5b6f18436d9e3179c5be570e3eb2177a9f29729e4cada1f649bd610',
     },
     'trixie': {
@@ -784,6 +785,9 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         if CHECK_MK_MINOR_VERSION >= 4:
             multisites[site]['message_broker_port'] = site_config.get('message_broker_port', 5672)
 
+        if CHECK_MK_MINOR_VERSION >= 4:
+            multisites[site]['is_trusted'] = site_config.get('is_trusted', True)
+
         for server in site_config.get('livestatus_server', {}):
             status_host = None
             if server.get('name', ''):
@@ -813,6 +817,8 @@ for site, site_config in check_mk_config.get('sites', {}).items():
 
             if CHECK_MK_MINOR_VERSION >= 4:
                 multisites[server_site_name]['message_broker_port'] = server.get('message_broker_port', 5672)
+            if CHECK_MK_MINOR_VERSION >= 4:
+                multisites[server_site_name]['is_trusted'] = server.get('is_trusted', True)
 
         files['{}/etc/check_mk/multisite.d/sites.mk'.format(site_folder)] = {
             'content': '\n'.join([
@@ -1276,7 +1282,99 @@ for site, site_config in check_mk_config.get('sites', {}).items():
         'notification_fallback_email': site_config.get('admin_email', ''),
     }
 
-    if CHECK_MK_MAJOR_VERSION >= 2 and CHECK_MK_MINOR_VERSION >= 3:
+    if CHECK_MK_MAJOR_VERSION >= 2 and CHECK_MK_MINOR_VERSION >= 4:
+        global_mk_config['use_new_descriptions_for'] = {
+            'aix_memory': False,
+            'barracuda_mailqueues': True,
+            'brocade_sys_mem': False,
+            'casa_cpu_temp': True,
+            'cisco_mem': False,
+            'cisco_mem_asa': False,
+            'cisco_mem_asa64': False,
+            'cmciii_lcp_airin': True,
+            'cmciii_lcp_airout': True,
+            'cmciii_lcp_water': True,
+            'cmciii_psm_current': True,
+            'cmciii_temp': True,
+            'cmk_inventory': True,
+            'db2_mem': False,
+            'df': True,
+            'df_netapp': True,
+            'df_netapp32': True,
+            'docker_container_mem': False,
+            'enterasys_temp': True,
+            'esx_vsphere_datastores': True,
+            'esx_vsphere_hostsystem_mem_usage': False,
+            'esx_vsphere_hostsystem_mem_usage_cluster': False,
+            'etherbox_temp': True,
+            'fortigate_memory': False,
+            'fortigate_memory_base': False,
+            'fortigate_node_memory': False,
+            'hr_fs': True,
+            'hr_mem': False,
+            'http': True,
+            'huawei_switch_mem': False,
+            'hyperv_vms': True,
+            'ibm_svc_mdiskgrp': True,
+            'ibm_svc_system': True,
+            'ibm_svc_systemstats_cache': True,
+            'ibm_svc_systemstats_disk_latency': True,
+            'ibm_svc_systemstats_diskio': True,
+            'ibm_svc_systemstats_iops': True,
+            'innovaphone_mem': False,
+            'innovaphone_temp': True,
+            'juniper_mem': False,
+            'juniper_screenos_mem': False,
+            'juniper_trpz_mem': False,
+            'liebert_bat_temp': True,
+            'logwatch': True,
+            'logwatch_groups': True,
+            'megaraid_bbu': False,
+            'megaraid_ldisks': False,
+            'megaraid_pdisks': False,
+            'mem_used': False,
+            'mem_win': False,
+            'mknotifyd': True,
+            'mknotifyd_connection': True,
+            'mssql_backup': True,
+            'mssql_blocked_sessions': False,
+            'mssql_counters_cache_hits': True,
+            'mssql_counters_file_sizes': True,
+            'mssql_counters_locks': True,
+            'mssql_counters_locks_per_batch': True,
+            'mssql_counters_pageactivity': True,
+            'mssql_counters_sqlstats': True,
+            'mssql_counters_transactions': True,
+            'mssql_databases': True,
+            'mssql_datafiles': True,
+            'mssql_tablespaces': True,
+            'mssql_transactionlogs': True,
+            'mssql_versions': True,
+            'netapp_ontap_snapshots': True,
+            'netapp_ontap_volumes': False,
+            'netscaler_mem': False,
+            'nullmailer_mailq': True,
+            'nvidia_temp': True,
+            'postfix_mailq': True,
+            'prism_alerts': False,
+            'prism_containers': False,
+            'prism_info': False,
+            'prism_storage_pools': False,
+            'ps': True,
+            'qmail_stats': True,
+            'raritan_emx': True,
+            'raritan_pdu_inlet': True,
+            'services': True,
+            'solaris_mem': False,
+            'sophos_memory': False,
+            'statgrab_mem': False,
+            'tplink_mem': False,
+            'ups_bat_temp': True,
+            'vms_diskstat_df': True,
+            'wmic_process': True,
+            'zfsget': True,
+        }
+    elif CHECK_MK_MAJOR_VERSION >= 2 and CHECK_MK_MINOR_VERSION >= 3:
         global_mk_config['use_new_descriptions_for'] = [
             'df',
             'df_netapp',
@@ -1462,7 +1560,17 @@ for site, site_config in check_mk_config.get('sites', {}).items():
     ]
 
     for k, v in global_mk_config.items():
-        if isinstance(v, list):
+        if isinstance(v, dict):
+            use_new_descriptions_for = []
+            for l, w in v.items():
+                use_new_descriptions_for += [f" '{l}': {w},"]
+
+            use_new_descriptions_for[0] = f'{k} = {{' + use_new_descriptions_for[0][1:]
+            use_new_descriptions_for[-1] = use_new_descriptions_for[-1][0:-1] + '}'
+
+            global_mk += use_new_descriptions_for
+
+        elif isinstance(v, list):
             use_new_descriptions_for = []
             for l in v:
                 use_new_descriptions_for += [
